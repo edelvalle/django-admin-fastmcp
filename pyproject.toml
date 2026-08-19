@@ -1,0 +1,167 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "django-admin-fastmcp"
+dynamic = ["version"]
+description = "Expose the Django admin as an MCP server, gated by each user's own admin permissions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Eddy Ernesto del Valle Pino", email = "eddy@edelvalle.me" },
+]
+keywords = [
+    "django",
+    "admin",
+    "mcp",
+    "fastmcp",
+    "model-context-protocol",
+    "ai",
+    "agents",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "django>=5.0",
+    "fastmcp>=3.4,<4",
+]
+
+[project.urls]
+Homepage = "https://github.com/edelvalle/django-admin-fastmcp"
+Repository = "https://github.com/edelvalle/django-admin-fastmcp.git"
+Issues = "https://github.com/edelvalle/django-admin-fastmcp/issues"
+Changelog = "https://github.com/edelvalle/django-admin-fastmcp/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+test = [
+    "pytest~=8.4",
+    "pytest-django~=4.13",
+    "pytest-cov",
+]
+typing = [
+    # zuban reads the standard [tool.mypy] configuration below.
+    "zuban>=0.9",
+]
+lint = [
+    "ruff",
+]
+devtools = [
+    "uvicorn[standard]",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "typing" },
+    { include-group = "lint" },
+    { include-group = "devtools" },
+]
+
+[tool.hatch.version]
+path = "django_admin_fastmcp/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/django_admin_fastmcp",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["django_admin_fastmcp"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.project.settings"
+pythonpath = ["."]
+addopts = "-vv --ff --maxfail=1"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "S",   # bandit (security)
+    "SIM", # simplifications
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "S101",   # asserts are fine, we use them for invariants
+    "TRY003", # long messages in exceptions are fine
+    "C901",   # complex functions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+# S105/S106: hardcoded secrets are test fixtures
+"tests/**" = ["S105", "S106"]
+"**/models.py" = ["RUF012"]
+"**/migrations/**" = ["RUF012", "E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# Zuban (mypy-compatible type checker) reads this section.
+# Kept lenient: Django models are dynamically typed.
+[tool.mypy]
+python_version = "3.11"
+files = ["django_admin_fastmcp"]
+exclude = '/migrations/'
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = false
+# Noise against Django's dynamically typed surface: request._messages,
+# user.is_staff on AbstractBaseUser, Field vs ForeignObjectRel unions,
+# manager methods the stubs miss. Same posture as django-datalog.
+disable_error_code = [
+    "attr-defined",
+    "union-attr",
+    "arg-type",
+    "index",
+    "misc",
+    "var-annotated",
+    "annotation-unchecked",
+]
+
+[tool.coverage.run]
+source = ["django_admin_fastmcp"]
+omit = [
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

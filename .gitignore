@@ -1,0 +1,41 @@
+# Env config
+.envrc
+.envrc.make.tmp
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+
+# Django
+*.log
+*.sqlite3
+*.sqlite3-journal
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+
+# Type checkers and linters
+.mypy_cache/
+.ruff_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-*
+.dir-locals.el
+
+# macOS
+.DS_Store
+
+# Distribution
+build/
+dist/
+*.egg-info/

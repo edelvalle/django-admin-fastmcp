@@ -1,0 +1,19 @@
+# Include package metadata and documentation
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml
+
+# Include package code
+recursive-include django_admin_fastmcp *.py
+
+# Exclude the test project from the distribution
+prune tests
+
+# Exclude development and build artifacts
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude *.egg-info
+global-exclude .DS_Store
