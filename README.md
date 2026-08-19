@@ -204,25 +204,78 @@ driven by a language model. The rails:
 
 ## Deployment
 
-**Separate process.** Run the MCP server next to your Django project:
+The MCP endpoint runs as its own process, next to your Django application:
 
 ```bash
 python manage.py admin_mcp_serve
 ```
 
-It serves the path from `MCP_URL`, which is `/admin/mcp` by default, on the port from
-`MCP_URL`, or 8765 when that URL names no port. Both are overridable with `--host` and
-`--port`. Nothing about your existing serving configuration changes. Route
-`/admin/mcp` through your ingress to that port, and make sure the `Authorization`
-header passes through.
+It serves the path from `MCP_URL` on the port in `MCP_URL`, or 8765 when that URL names
+no port. `--host` and `--port` override both. Nothing about how you already serve Django
+changes. The process is stateless, so any replica can serve any request.
 
-**Mounted (M3).** Mount the server at `/admin/mcp` inside your project's `asgi.py`. One
-constraint: dispatch on the exact path. The OAuth endpoints live directly below the same
-prefix (`/admin/mcp/authorize` and friends) and Django must keep serving those, so a
-dispatcher that sends everything under `/admin/mcp` to FastMCP would swallow them. The
-recipe ships with milestone M3.
+It needs its own process because FastMCP starts the streamable-HTTP session manager from
+the ASGI lifespan. A project that serves with lifespan disabled, which is common for
+Django, cannot host the MCP app inside its own ASGI application: the session manager
+never starts and every call fails. `admin_mcp_serve` runs its own server with lifespan
+enabled.
 
-The server is stateless, so any instance behind a load balancer can serve any request.
+### Behind a reverse proxy
+
+If you already route by path to separate worker pools, this is one more pool. Send the
+MCP path to the MCP process and leave every other path where it is. Three rules matter.
+
+**Match the exact path, never the prefix.** The OAuth endpoints sit directly below the
+same prefix (`/admin/mcp/authorize`, `token`, `register`, `revoke`), and Django must keep
+serving them, because the consent page rides the admin session cookie. A prefix rule
+hands them to the MCP process, which knows nothing about them, and no client can ever
+authorize. Keep `/.well-known/oauth-authorization-server` on the Django pool too.
+
+**Pass the `Authorization` header through.** The transport authenticates with a bearer
+token, so a proxy that strips or rewrites that header denies every call.
+
+**Do not apply an idle-read timeout to this route.** Responses are event streams. A
+short read timeout severs a tool call that thinks between writes.
+
+Caddy, where the exact matcher comes first because same-directive routes keep their file
+order:
+
+```caddy
+# The MCP endpoint. Exact path, so /admin/mcp/authorize stays with Django.
+@mcp path /admin/mcp
+reverse_proxy @mcp myapp_mcp:8000
+
+# The admin, including the OAuth endpoints under /admin/mcp/.
+@admin path /admin /admin/*
+reverse_proxy @admin myapp_admin:8000
+```
+
+nginx, where `location =` is the exact match and wins over the prefix:
+
+```nginx
+location = /admin/mcp { proxy_pass http://myapp_mcp:8000; }
+location /admin/      { proxy_pass http://myapp_admin:8000; }
+```
+
+With the route in place, `MCP_URL` is your public site URL plus the path, and the port
+stays private:
+
+```python
+ADMIN_FASTMCP = {
+    "SITE_URL": "https://app.example.com",
+    "MCP_URL": "https://app.example.com/admin/mcp",
+}
+```
+
+Both values are public URLs, so derive them from whatever setting already holds your
+site's canonical URL rather than writing them twice.
+
+### Mounted in your ASGI application
+
+Possible, and rarely worth it. It needs a parent lifespan that drives the FastMCP session
+manager, plus a dispatcher on the exact path for the reason above. A separate pool needs
+neither, and gives you independent restarts and scaling: an agent that hammers the tools
+cannot starve the workers serving people.
 
 ## Development
 
