@@ -47,6 +47,7 @@ def test_pks_over_max_pks_are_refused(settings, editor, books):
         run_action("demo.Book", "publish_books", ["1", "2", "3"])
 
 
-def test_a_read_only_scope_cannot_run_actions(editor, books):
-    with impersonate(editor, scopes=["admin:read"]), pytest.raises(ToolError, match="admin:write"):
-        run_action("demo.Book", "publish_books", [str(books["plain"].pk)])
+def test_actions_refuse_models_outside_writable_models(superuser, credential):
+    """Actions are writes: WRITABLE_MODELS bans them, whoever calls."""
+    with impersonate(superuser), pytest.raises(ToolError, match="WRITABLE_MODELS"):
+        run_action("demo.ApiCredential", "delete_selected", [str(credential.pk)])

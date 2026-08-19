@@ -14,9 +14,7 @@ from django.db.models import Model
 from django.http import HttpRequest
 
 from django_admin_fastmcp import exposure
-from django_admin_fastmcp.auth import current_scopes
 from django_admin_fastmcp.errors import ToolError, denied
-from django_admin_fastmcp.models import SCOPE_WRITE
 from django_admin_fastmcp.request import admin_request
 
 Action = Literal["view", "add", "change", "delete"]
@@ -39,9 +37,14 @@ def resolve(user, label: str, action: Action) -> tuple[type[Model], ModelAdmin, 
 
 
 def require_write(label: str) -> None:
-    """The two write gates on top of ModelAdmin permissions (SPEC.md section 9)."""
-    if SCOPE_WRITE not in current_scopes():
-        raise denied("this grant lacks the admin:write scope")
+    """The deployment-level write gate (SPEC.md section 9).
+
+    WRITABLE_MODELS is the only MCP-side gate. Per-user authorization is
+    entirely the admin's: `resolve` asks has_add/change/delete_permission
+    right after this, so a user without the model permission is refused
+    there. Leave a model out of WRITABLE_MODELS to ban all writes to it, an
+    event log for example, whatever any user may do in the admin UI.
+    """
     if not exposure.is_writable(label):
         raise denied(f"model {label} is not in WRITABLE_MODELS")
 

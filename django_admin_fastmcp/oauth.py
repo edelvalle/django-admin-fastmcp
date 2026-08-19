@@ -28,8 +28,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from django_admin_fastmcp.models import (
-    SCOPE_READ,
-    SCOPE_WRITE,
+    SCOPE_ADMIN,
     McpAuthorizationCode,
     McpClient,
     McpToken,
@@ -38,9 +37,8 @@ from django_admin_fastmcp.models import (
     split_wire_token,
 )
 
-ALL_SCOPES = (SCOPE_READ, SCOPE_WRITE)
+ALL_SCOPES = (SCOPE_ADMIN,)
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
-WRITE_PERMISSION = "django_admin_fastmcp.write_via_mcp"
 
 
 # -- helpers ---------------------------------------------------------------
@@ -59,20 +57,6 @@ def _pkce_matches(challenge: str, verifier: str) -> bool:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return constant_time_compare(challenge, expected)
-
-
-def _allowed_scopes(user, requested: list[str]) -> list[str]:
-    """Narrow the requested scopes to what this user may hold.
-
-    `admin:write` needs the `write_via_mcp` permission, granted by a
-    superuser. Unknown scopes are dropped, never granted.
-    """
-    scopes = [s for s in requested if s in ALL_SCOPES]
-    if SCOPE_READ not in scopes:
-        scopes.insert(0, SCOPE_READ)
-    if SCOPE_WRITE in scopes and not user.has_perm(WRITE_PERMISSION):
-        scopes.remove(SCOPE_WRITE)
-    return scopes
 
 
 def _token_error(error: str, description: str = "", status: int = 400) -> JsonResponse:
@@ -186,8 +170,8 @@ def authorize(request: HttpRequest) -> HttpResponse:
     if not code_challenge or params.get("code_challenge_method") != "S256":
         return _redirect_error("invalid_request")
 
-    requested = (params.get("scope") or SCOPE_READ).split()
-    scopes = _allowed_scopes(request.user, requested)
+    # Requested scopes are ignored on purpose: there is only one, and what a
+    # grant may do is decided by the user's admin permissions, not by scopes.
     resource = params.get("resource", "")
 
     if request.method == "GET":
@@ -196,13 +180,11 @@ def authorize(request: HttpRequest) -> HttpResponse:
             "django_admin_fastmcp/authorize.html",
             {
                 "client": client,
-                "scopes": scopes,
-                "write_scope": SCOPE_WRITE,
                 "params": {
                     "response_type": "code",
                     "client_id": client.client_id,
                     "redirect_uri": redirect_uri,
-                    "scope": " ".join(scopes),
+                    "scope": SCOPE_ADMIN,
                     "state": state,
                     "code_challenge": code_challenge,
                     "code_challenge_method": "S256",
@@ -214,11 +196,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
     if params.get("decision") != "approve":
         return _redirect_error("access_denied")
 
-    approved = [s for s in scopes if s in set(params.getlist("approved_scope") or scopes)]
     code = McpAuthorizationCode.mint(
         client=client,
         user=request.user,
-        scopes=_allowed_scopes(request.user, approved),
+        scopes=[SCOPE_ADMIN],
         redirect_uri=redirect_uri,
         code_challenge=code_challenge,
         resource=resource,

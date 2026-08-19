@@ -8,27 +8,18 @@
   <strong>{{ client.name }}</strong> asks to act in the admin as
   <strong>{{ request.user.get_username }}</strong>.
 </p>
+<ul>
+  <li>It can read what you can read in the admin.</li>
+  <li>It can create, change, delete, and run actions only where you can,
+      and only on models this server accepts writes for.</li>
+  <li>Every change it makes is logged in the admin history under your name,
+      marked with the client name.</li>
+</ul>
 <form method="post">
   {% csrf_token %}
   {% for key, value in params.items %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
   {% endfor %}
-  <fieldset class="module aligned">
-    {% for scope in scopes %}
-      <div class="form-row">
-        <label>
-          <input type="checkbox" name="approved_scope" value="{{ scope }}"
-                 {% if scope != write_scope %}checked{% endif %}>
-          {{ scope }}
-          {% if scope == write_scope %}
-            (create, change, delete, and run actions on writable models)
-          {% else %}
-            (read what you can read in the admin)
-          {% endif %}
-        </label>
-      </div>
-    {% endfor %}
-  </fieldset>
   <div class="submit-row">
     <input type="submit" name="decision" value="approve" class="default">
     <input type="submit" name="decision" value="deny">

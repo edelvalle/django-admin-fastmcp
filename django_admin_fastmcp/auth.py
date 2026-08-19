@@ -27,21 +27,20 @@ from django_admin_fastmcp.models import (
 LAST_USED_THROTTLE = timedelta(minutes=1)
 
 # Test hook: the in-memory MCP transport carries no HTTP bearer token, so the
-# test suite impersonates a (user, scopes) pair here. Production calls never
-# set it.
+# test suite impersonates a user here. Production calls never set it.
 _impersonated: contextvars.ContextVar = contextvars.ContextVar(
     "django_admin_fastmcp_user", default=None
 )
 
 
 class impersonate:
-    """Context manager for tests: run tool calls as `user` with `scopes`."""
+    """Context manager for tests: run tool calls as `user`."""
 
-    def __init__(self, user, scopes=("admin:read", "admin:write")):
-        self.pair = (user, list(scopes))
+    def __init__(self, user):
+        self.user = user
 
     def __enter__(self):
-        self._token = _impersonated.set(self.pair)
+        self._token = _impersonated.set(self.user)
         return self
 
     def __exit__(self, *exc_info):
@@ -97,7 +96,7 @@ def build_auth() -> RemoteAuthProvider:
         authorization_servers=[conf.get("SITE_URL")],
         base_url=conf.mcp_origin(),
         resource_name=conf.get("SERVER_NAME"),
-        scopes_supported=["admin:read", "admin:write"],
+        scopes_supported=["admin"],
     )
 
 
@@ -115,7 +114,7 @@ def current_user():
     """
     override = _impersonated.get()
     if override is not None:
-        return override[0]
+        return override
     access_token = _access_token()
     if access_token is None:
         raise denied("no authenticated user on this call")
@@ -124,15 +123,6 @@ def current_user():
     if user is None or not (user.is_active and user.is_staff):
         raise denied("not a staff user")
     return user
-
-
-def current_scopes() -> list[str]:
-    """Scopes of the current call."""
-    override = _impersonated.get()
-    if override is not None:
-        return override[1]
-    access_token = _access_token()
-    return list(access_token.scopes) if access_token else []
 
 
 def client_name() -> str:

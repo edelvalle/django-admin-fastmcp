@@ -14,7 +14,6 @@ from django.utils import timezone
 from django_admin_fastmcp.auth import DjangoAdminTokenVerifier, impersonate
 from django_admin_fastmcp.errors import ToolError
 from django_admin_fastmcp.models import McpClient, McpToken
-from tests.conftest import grant
 
 REDIRECT_URI = "http://127.0.0.1:33321/callback"
 verifier = DjangoAdminTokenVerifier()
@@ -180,7 +179,7 @@ def test_full_flow_issues_a_working_token_pair(client, superuser):
     access = verifier.verify_token_sync(data["access_token"])
     assert access is not None
     assert access.client_id == str(superuser.pk)
-    assert "admin:write" in access.scopes
+    assert access.scopes == ["admin"]
 
 
 def test_a_code_exchanges_exactly_once_and_reuse_revokes(client, superuser):
@@ -232,15 +231,16 @@ def test_refresh_rotates_both_tokens(client, superuser):
     assert replay.status_code == 400
 
 
-def test_write_scope_needs_the_permission(client, db):
-    plain_staff = User.objects.create_user("plain", password="pw", is_staff=True)
-    data = full_flow(client, plain_staff)
-    assert data["scope"] == "admin:read"
+def test_requested_scopes_are_ignored_and_admin_is_granted(client, db):
+    """Scopes do not carry authorization: the user's permissions do.
 
-    trusted = User.objects.create_user("trusted", password="pw", is_staff=True)
-    trusted = grant(trusted, "django_admin_fastmcp.write_via_mcp")
-    data = full_flow(client, trusted)
-    assert "admin:write" in data["scope"].split()
+    Whatever the client asks for, the grant carries the single "admin"
+    scope, and what it may do is decided per call by the admin's own
+    permission checks.
+    """
+    plain_staff = User.objects.create_user("plain", password="pw", is_staff=True)
+    data = full_flow(client, plain_staff, scope="everything admin:write root")
+    assert data["scope"] == "admin"
 
 
 # -- the verifier -------------------------------------------------------------
@@ -248,9 +248,7 @@ def test_write_scope_needs_the_permission(client, db):
 
 def issue_grant(user) -> tuple[McpToken, str]:
     mcp_client = McpClient.objects.create(name="t", redirect_uris=[REDIRECT_URI])
-    grant_row, access, _refresh = McpToken.issue(
-        user=user, client=mcp_client, scopes=["admin:read"]
-    )
+    grant_row, access, _refresh = McpToken.issue(user=user, client=mcp_client, scopes=["admin"])
     return grant_row, access
 
 
@@ -289,11 +287,17 @@ def test_verifier_denies_deactivated_and_destaffed_users(db):
     assert verifier.verify_token_sync(access2) is None
 
 
-def test_a_read_only_grant_cannot_reach_a_write_tool(superuser, author):
+def test_a_grant_never_exceeds_its_users_permissions(client, db, author):
+    """The whole authorization story after the flow: Django permissions.
+
+    A staff user with no model permissions gets a working token that can
+    call tools, and every write is refused by the admin's own checks.
+    """
+    from django_admin_fastmcp.tools.introspect import list_models
     from django_admin_fastmcp.tools.write import create_object
 
-    with (
-        impersonate(superuser, scopes=["admin:read"]),
-        pytest.raises(ToolError, match="admin:write"),
-    ):
-        create_object("demo.Book", {"title": "Nope", "author": str(author.pk)})
+    nobody = User.objects.create_user("nobody", password="pw", is_staff=True)
+    with impersonate(nobody):
+        assert list_models() == []
+        with pytest.raises(ToolError, match="no add permission"):
+            create_object("demo.Book", {"title": "Nope", "author": str(author.pk)})

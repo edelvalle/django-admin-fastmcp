@@ -21,8 +21,9 @@ from django.utils import timezone
 ACCESS_TOKEN_MARKER = "damf"  # noqa: S105 - a wire-format tag, not a secret
 REFRESH_TOKEN_MARKER = "damfr"  # noqa: S105
 
-SCOPE_READ = "admin:read"
-SCOPE_WRITE = "admin:write"
+# One scope: "act in the admin as this user". What a grant may do is decided
+# by the user's own admin permissions plus WRITABLE_MODELS, not by scopes.
+SCOPE_ADMIN = "admin"
 
 
 def make_secret() -> str:
@@ -74,8 +75,8 @@ class McpToken(models.Model):
     """One grant: user x client, holding the current token pair.
 
     The access token expires fast and renews with the refresh token, which
-    rotates on every use. A grant is as privileged as its scopes allow and
-    never more than its user.
+    rotates on every use. A grant acts with its user's own admin
+    permissions, never more.
     """
 
     user = models.ForeignKey(
@@ -94,9 +95,6 @@ class McpToken(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        permissions = [("write_via_mcp", "Can obtain the admin:write scope over MCP")]
 
     def __str__(self):
         return f"{self.user} x {self.client}"
