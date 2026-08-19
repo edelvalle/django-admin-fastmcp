@@ -270,6 +270,39 @@ ADMIN_FASTMCP = {
 Both values are public URLs, so derive them from whatever setting already holds your
 site's canonical URL rather than writing them twice.
 
+### Under your own server
+
+`admin_mcp_serve` is uvicorn with one setting that matters: `lifespan="on"`. Any ASGI
+server works, as long as it runs the lifespan. Expose the app in a module of your own:
+
+```python
+# myproject/asgi_mcp.py
+import os
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "myproject.settings")
+
+import django
+
+django.setup()
+
+from django.conf import settings
+from django_admin_fastmcp.server import BodySizeLimit, build_server
+
+application = BodySizeLimit(build_server().http_app(stateless_http=True, path="/admin/mcp"))
+```
+
+Then serve it the way you serve the rest of your fleet, with lifespan enabled:
+
+```bash
+granian --interface asgi --host 0.0.0.0 --port 8000 myproject.asgi_mcp:application
+uvicorn --lifespan on --host 0.0.0.0 --port 8000 myproject.asgi_mcp:application
+```
+
+Granian's `asginl` interface, and `uvicorn --lifespan off`, both skip the lifespan. A
+Django project often chooses one of those for its own app, because Django implements no
+lifespan. This app is the opposite: skip the lifespan and the session manager never
+starts, so every call answers `RuntimeError: Task group is not initialized`.
+
 ### Mounted in your ASGI application
 
 Possible, and rarely worth it. It needs a parent lifespan that drives the FastMCP session
