@@ -1,0 +1,145 @@
+"""DjangoAdminTokenVerifier, RemoteAuthProvider wiring, current_user() (SPEC.md section 8).
+
+The MCP server side of auth: a FastMCP `RemoteAuthProvider` composes the
+verifier with RFC 9728 protected-resource metadata naming the Django site as
+the authorization server.
+"""
+
+import contextvars
+from datetime import timedelta
+
+from asgiref.sync import sync_to_async
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
+from fastmcp.server.dependencies import get_access_token
+
+from django_admin_fastmcp import conf
+from django_admin_fastmcp.errors import denied
+from django_admin_fastmcp.models import (
+    ACCESS_TOKEN_MARKER,
+    McpToken,
+    constant_time_compare,
+    hash_secret,
+    split_wire_token,
+)
+
+LAST_USED_THROTTLE = timedelta(minutes=1)
+
+# Test hook: the in-memory MCP transport carries no HTTP bearer token, so the
+# test suite impersonates a (user, scopes) pair here. Production calls never
+# set it.
+_impersonated: contextvars.ContextVar = contextvars.ContextVar(
+    "django_admin_fastmcp_user", default=None
+)
+
+
+class impersonate:
+    """Context manager for tests: run tool calls as `user` with `scopes`."""
+
+    def __init__(self, user, scopes=("admin:read", "admin:write")):
+        self.pair = (user, list(scopes))
+
+    def __enter__(self):
+        self._token = _impersonated.set(self.pair)
+        return self
+
+    def __exit__(self, *exc_info):
+        _impersonated.reset(self._token)
+
+
+class DjangoAdminTokenVerifier(TokenVerifier):
+    """Verify a wire token against McpToken. Every failure path denies."""
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        return await sync_to_async(self.verify_token_sync)(token)
+
+    def verify_token_sync(self, token: str) -> AccessToken | None:
+        parts = split_wire_token(token)
+        if parts is None or parts[0] != ACCESS_TOKEN_MARKER:
+            return None
+        _, prefix, secret = parts
+        grant = McpToken.objects.filter(access_prefix=prefix).select_related("user").first()
+        if grant is None:
+            return None
+        if not constant_time_compare(hash_secret(secret, grant.salt), grant.access_hash):
+            return None
+        now = timezone.now()
+        if grant.is_revoked or grant.access_expires_at < now:
+            return None
+        if not (grant.user.is_active and grant.user.is_staff):
+            return None
+        expected_resource = conf.get("MCP_URL").rstrip("/")
+        if grant.resource and grant.resource.rstrip("/") != expected_resource:
+            return None
+        if grant.last_used_at is None or now - grant.last_used_at > LAST_USED_THROTTLE:
+            grant.last_used_at = now
+            grant.save(update_fields=["last_used_at"])
+        return AccessToken(
+            token=token,
+            client_id=str(grant.user.pk),
+            scopes=list(grant.scopes),
+            expires_at=int(grant.access_expires_at.timestamp()),
+            resource=grant.resource or None,
+            claims={"user_pk": grant.user.pk, "mcp_client": grant.client.name},
+        )
+
+
+def build_auth() -> RemoteAuthProvider:
+    """Compose the verifier with RFC 9728 protected-resource metadata.
+
+    `base_url` is the origin only. FastMCP appends the mount path to it when
+    the app is built, so the advertised resource comes out equal to MCP_URL,
+    which is what the verifier compares each token's audience against.
+    """
+    return RemoteAuthProvider(
+        token_verifier=DjangoAdminTokenVerifier(),
+        authorization_servers=[conf.get("SITE_URL")],
+        base_url=conf.mcp_origin(),
+        resource_name=conf.get("SERVER_NAME"),
+        scopes_supported=["admin:read", "admin:write"],
+    )
+
+
+def _access_token():
+    try:
+        return get_access_token()
+    except Exception:
+        return None
+
+
+def current_user():
+    """The Django user behind the current tool call. Denies when absent.
+
+    Runs inside a sync tool, so the ORM is legal here.
+    """
+    override = _impersonated.get()
+    if override is not None:
+        return override[0]
+    access_token = _access_token()
+    if access_token is None:
+        raise denied("no authenticated user on this call")
+    claims = access_token.claims or {}
+    user = get_user_model().objects.filter(pk=claims.get("user_pk")).first()
+    if user is None or not (user.is_active and user.is_staff):
+        raise denied("not a staff user")
+    return user
+
+
+def current_scopes() -> list[str]:
+    """Scopes of the current call."""
+    override = _impersonated.get()
+    if override is not None:
+        return override[1]
+    access_token = _access_token()
+    return list(access_token.scopes) if access_token else []
+
+
+def client_name() -> str:
+    """The OAuth client name, for LogEntry change messages."""
+    if _impersonated.get() is not None:
+        return "test"
+    access_token = _access_token()
+    if access_token is None:
+        return "unknown"
+    return str((access_token.claims or {}).get("mcp_client", "unknown"))
