@@ -1,10 +1,10 @@
 # Review: django-admin-fastmcp, the whole implementation
 
-**Scope:** the entire repository at its initial state. Nothing is committed
-yet, so this document reviews every file in the tree rather than a diff
-range. 58 files: about 3,200 lines of Python across package, test project,
-and tests, plus configuration, docs, and generated files. The coverage
-table at the end reconciles against the tree.
+**Scope:** the entire repository at its current state (the seven initial
+commits plus the write-gate simplification). 58 files: about 3,200 lines of
+Python across package, test project, and tests, plus configuration, docs,
+and generated files. The coverage table at the end reconciles against the
+tree.
 
 **Status:** implemented through milestone M2 of `SPEC.md` (reads, writes,
 actions, and the OAuth flow). M3 (CI matrix, PyPI release, ASGI mount
@@ -50,12 +50,12 @@ shaped the code, plus the ones made during implementation:
   auth on the MCP transport, because it cannot serve a remote client and
   drags CSRF into the protocol. The cookie now appears only in the browser
   consent step, where Django already handles it.
-- **`admin:write` scope requires a Django permission** (`write_via_mcp`),
-  granted by a superuser in the normal user admin (D2, D4). Rejected: a
-  per-token checkbox, which a staff user could tick for themselves.
-- **Two independent write gates.** A grant needs the `admin:write` scope AND
-  the model must be in `WRITABLE_MODELS`. A leaked token alone cannot write;
-  a permissive server alone cannot write either.
+- **One permission system, Django's.** Writes are gated by `WRITABLE_MODELS`
+  (deployment-level: leave an event-log model out and nothing can write it,
+  whoever calls) and by the user's own admin permissions per call. Rejected:
+  an earlier design with a `write_via_mcp` permission and an `admin:write`
+  scope, dropped for adding a second permission system on top of the one the
+  admin already has. Every grant carries the single `admin` scope.
 - **Eleven generic tools, not per-model tools** (D7). 150 registered models
   times four operations is an unusable catalogue for any MCP client.
 - **Sync `def` tools** (D6). The admin API is sync-only. FastMCP runs sync
@@ -1005,8 +1005,9 @@ from django.utils import timezone
 ACCESS_TOKEN_MARKER = "damf"  # noqa: S105 - a wire-format tag, not a secret
 REFRESH_TOKEN_MARKER = "damfr"  # noqa: S105
 
-SCOPE_READ = "admin:read"
-SCOPE_WRITE = "admin:write"
+# One scope: "act in the admin as this user". What a grant may do is decided
+# by the user's own admin permissions plus WRITABLE_MODELS, not by scopes.
+SCOPE_ADMIN = "admin"
 
 
 def make_secret() -> str:
@@ -1047,9 +1048,7 @@ def split_wire_token(wire: str) -> tuple[str, str, str] | None:
 Three models. `McpClient` is a dynamically registered OAuth client (RFC
 7591). `McpToken` is one grant: user x client, holding the hashes of the
 current access and refresh pair; `issue` creates it and `rotate` renews both
-tokens in place, so a replayed refresh token dies naturally. The
-`write_via_mcp` permission hangs off this model's Meta, which is what lets a
-superuser grant write scope through the ordinary user admin. Plaintext
+tokens in place, so a replayed refresh token dies naturally. Plaintext
 tokens exist only in return values, never in a field. `McpAuthorizationCode`
 is stored by hash too, expires in 60 seconds, burns on first use, and keeps
 a foreign key to the grant it minted so a replay can revoke it. Reviewer
@@ -1075,8 +1074,8 @@ class McpToken(models.Model):
     """One grant: user x client, holding the current token pair.
 
     The access token expires fast and renews with the refresh token, which
-    rotates on every use. A grant is as privileged as its scopes allow and
-    never more than its user.
+    rotates on every use. A grant acts with its user's own admin
+    permissions, never more.
     """
 
     user = models.ForeignKey(
@@ -1095,9 +1094,6 @@ class McpToken(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        permissions = [("write_via_mcp", "Can obtain the admin:write scope over MCP")]
 
     def __str__(self):
         return f"{self.user} x {self.client}"
@@ -1212,10 +1208,10 @@ class McpAuthorizationCode(models.Model):
 
 `oauth.py` holds the five endpoints as plain Django views. The helpers set
 the security posture: redirect URIs must be https or loopback http (CLI
-clients like Claude Code listen on `127.0.0.1`), PKCE is S256 only, and
-scope narrowing drops anything the user may not hold: `admin:write`
-requires the `write_via_mcp` permission and unknown scopes are dropped,
-never granted. The metadata document derives every URL from the request and
+clients like Claude Code listen on `127.0.0.1`) and PKCE is S256 only.
+Requested scopes are ignored: every grant carries the single `admin` scope,
+because authorization lives in the admin's permissions, not in scopes. The
+metadata document derives every URL from the request and
 `reverse()`, so it follows whatever mount prefix the project chose.
 Registration accepts any client (that is the point of RFC 7591: Claude Code
 registers itself), but a client is only a name and redirect list; identity
@@ -1254,8 +1250,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from django_admin_fastmcp.models import (
-    SCOPE_READ,
-    SCOPE_WRITE,
+    SCOPE_ADMIN,
     McpAuthorizationCode,
     McpClient,
     McpToken,
@@ -1264,9 +1259,8 @@ from django_admin_fastmcp.models import (
     split_wire_token,
 )
 
-ALL_SCOPES = (SCOPE_READ, SCOPE_WRITE)
+ALL_SCOPES = (SCOPE_ADMIN,)
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
-WRITE_PERMISSION = "django_admin_fastmcp.write_via_mcp"
 
 
 # -- helpers ---------------------------------------------------------------
@@ -1285,20 +1279,6 @@ def _pkce_matches(challenge: str, verifier: str) -> bool:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return constant_time_compare(challenge, expected)
-
-
-def _allowed_scopes(user, requested: list[str]) -> list[str]:
-    """Narrow the requested scopes to what this user may hold.
-
-    `admin:write` needs the `write_via_mcp` permission, granted by a
-    superuser. Unknown scopes are dropped, never granted.
-    """
-    scopes = [s for s in requested if s in ALL_SCOPES]
-    if SCOPE_READ not in scopes:
-        scopes.insert(0, SCOPE_READ)
-    if SCOPE_WRITE in scopes and not user.has_perm(WRITE_PERMISSION):
-        scopes.remove(SCOPE_WRITE)
-    return scopes
 
 
 def _token_error(error: str, description: str = "", status: int = 400) -> JsonResponse:
@@ -1386,10 +1366,10 @@ authenticated non-staff get a 403. Client identity errors (unknown client,
 unregistered redirect URI) render locally and never redirect, per OAuth 2.1
 security guidance: redirecting to an unverified URI would build an open
 redirector. Everything else redirects back to the client with an `error`
-parameter. The POST branch re-derives allowed scopes from the user rather
-than trusting the form, then mints the single-use code. The template extends
-the admin's own base so it looks native, and the write scope checkbox
-defaults to unticked.
+parameter. The POST branch mints the single-use code. The template extends
+the admin's own base so it looks native, and states plainly what approval
+means: the client acts with the user's own admin permissions, writes only
+where the server allows them, and everything is logged.
 
 **`django_admin_fastmcp/oauth.py`** (excerpt)
 
@@ -1428,8 +1408,8 @@ def authorize(request: HttpRequest) -> HttpResponse:
     if not code_challenge or params.get("code_challenge_method") != "S256":
         return _redirect_error("invalid_request")
 
-    requested = (params.get("scope") or SCOPE_READ).split()
-    scopes = _allowed_scopes(request.user, requested)
+    # Requested scopes are ignored on purpose: there is only one, and what a
+    # grant may do is decided by the user's admin permissions, not by scopes.
     resource = params.get("resource", "")
 
     if request.method == "GET":
@@ -1438,13 +1418,11 @@ def authorize(request: HttpRequest) -> HttpResponse:
             "django_admin_fastmcp/authorize.html",
             {
                 "client": client,
-                "scopes": scopes,
-                "write_scope": SCOPE_WRITE,
                 "params": {
                     "response_type": "code",
                     "client_id": client.client_id,
                     "redirect_uri": redirect_uri,
-                    "scope": " ".join(scopes),
+                    "scope": SCOPE_ADMIN,
                     "state": state,
                     "code_challenge": code_challenge,
                     "code_challenge_method": "S256",
@@ -1456,11 +1434,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
     if params.get("decision") != "approve":
         return _redirect_error("access_denied")
 
-    approved = [s for s in scopes if s in set(params.getlist("approved_scope") or scopes)]
     code = McpAuthorizationCode.mint(
         client=client,
         user=request.user,
-        scopes=_allowed_scopes(request.user, approved),
+        scopes=[SCOPE_ADMIN],
         redirect_uri=redirect_uri,
         code_challenge=code_challenge,
         resource=resource,
@@ -1484,27 +1461,18 @@ def authorize(request: HttpRequest) -> HttpResponse:
   <strong>{{ client.name }}</strong> asks to act in the admin as
   <strong>{{ request.user.get_username }}</strong>.
 </p>
+<ul>
+  <li>It can read what you can read in the admin.</li>
+  <li>It can create, change, delete, and run actions only where you can,
+      and only on models this server accepts writes for.</li>
+  <li>Every change it makes is logged in the admin history under your name,
+      marked with the client name.</li>
+</ul>
 <form method="post">
   {% csrf_token %}
   {% for key, value in params.items %}
     <input type="hidden" name="{{ key }}" value="{{ value }}">
   {% endfor %}
-  <fieldset class="module aligned">
-    {% for scope in scopes %}
-      <div class="form-row">
-        <label>
-          <input type="checkbox" name="approved_scope" value="{{ scope }}"
-                 {% if scope != write_scope %}checked{% endif %}>
-          {{ scope }}
-          {% if scope == write_scope %}
-            (create, change, delete, and run actions on writable models)
-          {% else %}
-            (read what you can read in the admin)
-          {% endif %}
-        </label>
-      </div>
-    {% endfor %}
-  </fieldset>
   <div class="submit-row">
     <input type="submit" name="decision" value="approve" class="default">
     <input type="submit" name="decision" value="deny">
@@ -1779,21 +1747,20 @@ from django_admin_fastmcp.models import (
 LAST_USED_THROTTLE = timedelta(minutes=1)
 
 # Test hook: the in-memory MCP transport carries no HTTP bearer token, so the
-# test suite impersonates a (user, scopes) pair here. Production calls never
-# set it.
+# test suite impersonates a user here. Production calls never set it.
 _impersonated: contextvars.ContextVar = contextvars.ContextVar(
     "django_admin_fastmcp_user", default=None
 )
 
 
 class impersonate:
-    """Context manager for tests: run tool calls as `user` with `scopes`."""
+    """Context manager for tests: run tool calls as `user`."""
 
-    def __init__(self, user, scopes=("admin:read", "admin:write")):
-        self.pair = (user, list(scopes))
+    def __init__(self, user):
+        self.user = user
 
     def __enter__(self):
-        self._token = _impersonated.set(self.pair)
+        self._token = _impersonated.set(self.user)
         return self
 
     def __exit__(self, *exc_info):
@@ -1849,7 +1816,7 @@ def build_auth() -> RemoteAuthProvider:
         authorization_servers=[conf.get("SITE_URL")],
         base_url=conf.mcp_origin(),
         resource_name=conf.get("SERVER_NAME"),
-        scopes_supported=["admin:read", "admin:write"],
+        scopes_supported=["admin"],
     )
 
 
@@ -1867,7 +1834,7 @@ def current_user():
     """
     override = _impersonated.get()
     if override is not None:
-        return override[0]
+        return override
     access_token = _access_token()
     if access_token is None:
         raise denied("no authenticated user on this call")
@@ -1876,15 +1843,6 @@ def current_user():
     if user is None or not (user.is_active and user.is_staff):
         raise denied("not a staff user")
     return user
-
-
-def current_scopes() -> list[str]:
-    """Scopes of the current call."""
-    override = _impersonated.get()
-    if override is not None:
-        return override[1]
-    access_token = _access_token()
-    return list(access_token.scopes) if access_token else []
 
 
 def client_name() -> str:
@@ -1899,13 +1857,15 @@ def client_name() -> str:
 
 ## Part III: The tool surface
 
-### 15. resolve() and the write gates
+### 15. resolve() and the write gate
 
 Every tool resolves its target through one function, in one order: active
 staff user, exposed label, registered ModelAdmin, then the admin's own
 `has_<action>_permission`. Every failure raises; no branch allows a call
-because a lookup returned `None`. `require_write` adds the two write gates
-on top. `validate_lookup_path` guards `search_objects` filters: the root
+because a lookup returned `None`. `require_write` adds the one MCP-side write
+gate on top: the model must be named in `WRITABLE_MODELS`; per-user
+authorization stays with the admin's own permission checks.
+`validate_lookup_path` guards `search_objects` filters: the root
 must be a real concrete field (unknown is an error, never a silent no-op)
 and no segment may name a redacted field, which closes the
 filter-as-oracle side channel (`password__startswith="a"` would leak a
@@ -1930,9 +1890,7 @@ from django.db.models import Model
 from django.http import HttpRequest
 
 from django_admin_fastmcp import exposure
-from django_admin_fastmcp.auth import current_scopes
 from django_admin_fastmcp.errors import ToolError, denied
-from django_admin_fastmcp.models import SCOPE_WRITE
 from django_admin_fastmcp.request import admin_request
 
 Action = Literal["view", "add", "change", "delete"]
@@ -1955,9 +1913,14 @@ def resolve(user, label: str, action: Action) -> tuple[type[Model], ModelAdmin, 
 
 
 def require_write(label: str) -> None:
-    """The two write gates on top of ModelAdmin permissions (SPEC.md section 9)."""
-    if SCOPE_WRITE not in current_scopes():
-        raise denied("this grant lacks the admin:write scope")
+    """The deployment-level write gate (SPEC.md section 9).
+
+    WRITABLE_MODELS is the only MCP-side gate. Per-user authorization is
+    entirely the admin's: `resolve` asks has_add/change/delete_permission
+    right after this, so a user without the model permission is refused
+    there. Leave a model out of WRITABLE_MODELS to ban all writes to it, an
+    event log for example, whatever any user may do in the admin UI.
+    """
     if not exposure.is_writable(label):
         raise denied(f"model {label} is not in WRITABLE_MODELS")
 
@@ -3159,11 +3122,11 @@ client: registration persists the client and refuses non-loopback http;
 anonymous browsers land on the admin login; non-staff get 403; an
 unregistered redirect URI never redirects; a code exchanges exactly once
 and a replay revokes the grant it minted; a wrong PKCE verifier issues
-nothing; refresh rotates both tokens and the old pair dies; the write
-scope appears only for a user holding `write_via_mcp`. The verifier half
+nothing; refresh rotates both tokens and the old pair dies; requested
+scopes are ignored and every grant carries the `admin` scope. The verifier half
 calls `verify_token_sync` directly against every bad-token shape, plus
-expired, revoked, deactivated, and de-staffed. The last test proves the
-scope gate holds at the tool layer.
+expired, revoked, deactivated, and de-staffed. The last test proves a
+grant never exceeds its user's own permissions.
 
 **`tests/test_auth.py`**
 
@@ -3184,7 +3147,6 @@ from django.utils import timezone
 from django_admin_fastmcp.auth import DjangoAdminTokenVerifier, impersonate
 from django_admin_fastmcp.errors import ToolError
 from django_admin_fastmcp.models import McpClient, McpToken
-from tests.conftest import grant
 
 REDIRECT_URI = "http://127.0.0.1:33321/callback"
 verifier = DjangoAdminTokenVerifier()
@@ -3350,7 +3312,7 @@ def test_full_flow_issues_a_working_token_pair(client, superuser):
     access = verifier.verify_token_sync(data["access_token"])
     assert access is not None
     assert access.client_id == str(superuser.pk)
-    assert "admin:write" in access.scopes
+    assert access.scopes == ["admin"]
 
 
 def test_a_code_exchanges_exactly_once_and_reuse_revokes(client, superuser):
@@ -3402,15 +3364,16 @@ def test_refresh_rotates_both_tokens(client, superuser):
     assert replay.status_code == 400
 
 
-def test_write_scope_needs_the_permission(client, db):
-    plain_staff = User.objects.create_user("plain", password="pw", is_staff=True)
-    data = full_flow(client, plain_staff)
-    assert data["scope"] == "admin:read"
+def test_requested_scopes_are_ignored_and_admin_is_granted(client, db):
+    """Scopes do not carry authorization: the user's permissions do.
 
-    trusted = User.objects.create_user("trusted", password="pw", is_staff=True)
-    trusted = grant(trusted, "django_admin_fastmcp.write_via_mcp")
-    data = full_flow(client, trusted)
-    assert "admin:write" in data["scope"].split()
+    Whatever the client asks for, the grant carries the single "admin"
+    scope, and what it may do is decided per call by the admin's own
+    permission checks.
+    """
+    plain_staff = User.objects.create_user("plain", password="pw", is_staff=True)
+    data = full_flow(client, plain_staff, scope="everything admin:write root")
+    assert data["scope"] == "admin"
 
 
 # -- the verifier -------------------------------------------------------------
@@ -3418,9 +3381,7 @@ def test_write_scope_needs_the_permission(client, db):
 
 def issue_grant(user) -> tuple[McpToken, str]:
     mcp_client = McpClient.objects.create(name="t", redirect_uris=[REDIRECT_URI])
-    grant_row, access, _refresh = McpToken.issue(
-        user=user, client=mcp_client, scopes=["admin:read"]
-    )
+    grant_row, access, _refresh = McpToken.issue(user=user, client=mcp_client, scopes=["admin"])
     return grant_row, access
 
 
@@ -3459,14 +3420,20 @@ def test_verifier_denies_deactivated_and_destaffed_users(db):
     assert verifier.verify_token_sync(access2) is None
 
 
-def test_a_read_only_grant_cannot_reach_a_write_tool(superuser, author):
+def test_a_grant_never_exceeds_its_users_permissions(client, db, author):
+    """The whole authorization story after the flow: Django permissions.
+
+    A staff user with no model permissions gets a working token that can
+    call tools, and every write is refused by the admin's own checks.
+    """
+    from django_admin_fastmcp.tools.introspect import list_models
     from django_admin_fastmcp.tools.write import create_object
 
-    with (
-        impersonate(superuser, scopes=["admin:read"]),
-        pytest.raises(ToolError, match="admin:write"),
-    ):
-        create_object("demo.Book", {"title": "Nope", "author": str(author.pk)})
+    nobody = User.objects.create_user("nobody", password="pw", is_staff=True)
+    with impersonate(nobody):
+        assert list_models() == []
+        with pytest.raises(ToolError, match="no add permission"):
+            create_object("demo.Book", {"title": "Nope", "author": str(author.pk)})
 ```
 
 ### 25. Discovery and startup-check tests
@@ -3941,7 +3908,7 @@ errors; submitted readonly fields are ignored and reported; the delete
 preview is exact and changes nothing; `WRITABLE_MODELS` refuses even a
 superuser; unknown filters error instead of returning everything;
 `page_size` caps. Actions: preview by default, messages surface, hidden pks
-are unreachable, `MAX_PKS` enforced, read-only scope refused. The smoke
+are unreachable, `MAX_PKS` enforced, `WRITABLE_MODELS` refused for actions too. The smoke
 test just proves the package imports and is installed.
 
 **`tests/test_writes.py`**
@@ -4097,9 +4064,10 @@ def test_pks_over_max_pks_are_refused(settings, editor, books):
         run_action("demo.Book", "publish_books", ["1", "2", "3"])
 
 
-def test_a_read_only_scope_cannot_run_actions(editor, books):
-    with impersonate(editor, scopes=["admin:read"]), pytest.raises(ToolError, match="admin:write"):
-        run_action("demo.Book", "publish_books", [str(books["plain"].pk)])
+def test_actions_refuse_models_outside_writable_models(superuser, credential):
+    """Actions are writes: WRITABLE_MODELS bans them, whoever calls."""
+    with impersonate(superuser), pytest.raises(ToolError, match="WRITABLE_MODELS"):
+        run_action("demo.ApiCredential", "delete_selected", [str(credential.pk)])
 ```
 
 **`tests/test_smoke.py`**
@@ -4144,6 +4112,9 @@ defaults) but not reproduced. `uv.lock` is machine-generated.
   bad token: HTTPStatusError (401)
   ```
 
+  (Run before the write-gate simplification; the scope line reads `admin`
+  since then.)
+
 - SPEC section 2.2 spike ran first and passed: a sync tool read the ORM
   over streamable HTTP on Python 3.14 with fastmcp 3.4.6, no
   `SynchronousOnlyOperation`.
@@ -4153,9 +4124,6 @@ Known gaps in verification:
 - The Django 5.0 compat paths (`LogEntry.log_action` fallback, action
   tuples) are written but unexercised; the dev environment runs Django 6.1.
   The CI matrix (M3) covers this.
-- Scope enforcement at the FastMCP transport layer is not separately
-  tested; the package enforces `admin:write` itself in `require_write`,
-  which is tested.
 - `test_discovery.py` emits a `StarletteDeprecationWarning` about httpx in
   `starlette.testclient`. Harmless today.
 

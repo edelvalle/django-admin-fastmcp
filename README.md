@@ -91,7 +91,7 @@ No token, no header. The first call starts the standard MCP OAuth flow:
 1. The client opens your browser at the authorize page on the Django site.
 2. Your admin session cookie identifies you. If you are logged out, the normal admin
    login appears first.
-3. A consent page shows the client name and the requested scopes. You approve.
+3. A consent page shows the client name and what approval means. You approve.
 4. The client receives its tokens and connects. It refreshes them by itself.
 
 Any MCP client that speaks streamable HTTP with OAuth works the same way, for example
@@ -100,9 +100,9 @@ Cursor or a FastMCP `Client`.
 Rules around access:
 
 - Any staff user can authorize a client, for themselves only.
-- Grants are read-only by default. The consent page offers the write scope only to users
-  who hold the `write_via_mcp` permission, which a superuser grants in the user admin.
-- A grant can be less privileged than its user, never more.
+- A grant acts with your own admin permissions, never more. There is no separate
+  permission system: whoever may change a model in the admin may change it over MCP,
+  when the server lists that model in `WRITABLE_MODELS`.
 - Refresh tokens expire after `REFRESH_TOKEN_TTL_DAYS` (default 90), so re-consent
   happens that often. Revocation is an admin action on the grant changelist.
 
@@ -125,8 +125,10 @@ list is static. What varies per user is what each tool lets that user see and do
 
 ### Write
 
-Write tools need a grant with the `admin:write` scope and a model listed in
-`WRITABLE_MODELS`. Both gates apply.
+Write tools need the model listed in `WRITABLE_MODELS`; your own admin permissions
+decide the rest, per model and per object. A model outside the list refuses every write
+and every action, whoever calls. Leave sensitive models out, an event log for example,
+and no MCP client can ever write to them.
 
 | Tool | Arguments | Behavior |
 |---|---|---|
@@ -149,7 +151,7 @@ All keys live in the `ADMIN_FASTMCP` dict. An unknown key is an error at startup
 | `ADMIN_SITE` | `"django.contrib.admin.site"` | Dotted path to the `AdminSite`. |
 | `MODELS` | `()` | Allowlist of `"app_label.ModelName"`. When non-empty, nothing else is exposed. |
 | `EXCLUDE_MODELS` | `()` | Denylist. Supports `"app_label.*"`. |
-| `WRITABLE_MODELS` | `()` | Models that accept writes. Empty means no writes, whatever the token says. |
+| `WRITABLE_MODELS` | `()` | Models that accept writes. Empty means no writes, whoever calls. |
 | `DISABLED_TOOLS` | `()` | Tool names removed from the catalogue entirely. |
 | `REDACT_FIELDS` | `("password", "token", "secret", "api_key", "private_key")` | Substring match on field names. Values read `"[redacted]"`. |
 | `MAX_PAGE_SIZE` | `200` | Cap on `search_objects` page size. |
@@ -185,11 +187,11 @@ reveal it.
 An admin MCP server for a superuser is a remote shell over the production database,
 driven by a language model. The rails:
 
-- Grants are read-only by default. The write scope needs the `write_via_mcp` permission,
-  which only a superuser grants.
+- `WRITABLE_MODELS` defaults to empty, so no model accepts writes until the deployment
+  names it. Everything else is your ordinary Django permissions, asked through the
+  `ModelAdmin` on every call.
 - Access tokens are short-lived. Only salted hashes are stored, so a leaked database row
   cannot be replayed.
-- `WRITABLE_MODELS` defaults to empty, so no model accepts writes until named.
 - `delete_object` and `run_action` preview by default and change nothing until
   `confirm=True`.
 - Every mutation records a `LogEntry` attributed to the grant's user, with the client

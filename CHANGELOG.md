@@ -7,6 +7,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- One permission system. The `write_via_mcp` permission and the
+  `admin:write` scope are gone. Writes are gated by `WRITABLE_MODELS`
+  (deployment-level, bans whole models such as an event log) and by the
+  user's own admin permissions, nothing else. Every grant carries the
+  single `admin` scope.
+
 ### Added
 
 - The OAuth 2.1 authorization server: dynamic client registration, PKCE

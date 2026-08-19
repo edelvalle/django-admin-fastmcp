@@ -458,7 +458,7 @@ approves the client in the browser, where the admin session cookie already ident
 them. Nobody mints a token by hand, and nobody copies a secret.
 
 Bearer tokens still travel on the wire after the flow completes. What disappears is the
-manual step: the flow issues the tokens, scoped and short-lived, and the client refreshes
+manual step: the flow issues the tokens, short-lived, and the client refreshes
 them without user involvement.
 
 ### The flow
@@ -473,9 +473,10 @@ them without user involvement.
 4. The client opens the browser at the authorize endpoint. An anonymous user goes through
    the normal admin login first. A logged-in staff user lands directly on the consent
    page.
-5. The consent page shows the client name and the requested scopes. Approval is a POST
-   with CSRF protection. It redirects back to the client with a single-use authorization
-   code bound to the PKCE challenge.
+5. The consent page shows the client name and states what approval means: the client
+   acts with the user's own admin permissions, writes only where the server allows them,
+   and every change is logged. Approval is a POST with CSRF protection. It redirects back
+   to the client with a single-use authorization code bound to the PKCE challenge.
 6. The client exchanges the code and verifier at the token endpoint for an access token
    and a rotating refresh token.
 
@@ -542,12 +543,12 @@ class McpToken(models.Model):
     Only prefixes and salted SHA-256 hashes are stored, so a leaked database
     row cannot be replayed. The access token expires fast and is renewed with
     the refresh token, which rotates on every use. A grant is as privileged as
-    its scopes allow and never more than its user.
+    its user's admin permissions allow, never more.
     """
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                              related_name="mcp_tokens")
     client = models.ForeignKey(McpClient, on_delete=models.CASCADE)
-    scopes = models.JSONField()                       # ["admin:read", "admin:write"?]
+    scopes = models.JSONField()                       # always ["admin"], see below
     access_prefix = models.CharField(max_length=12, unique=True, db_index=True)
     access_hash = models.CharField(max_length=64)
     refresh_prefix = models.CharField(max_length=12, unique=True, db_index=True)
@@ -573,15 +574,20 @@ Verification of each MCP call runs in a FastMCP `TokenVerifier`:
 5. Return an `AccessToken` with `client_id = str(user.pk)` and the grant's scopes.
 6. Update `last_used_at` at most once per minute, to keep the write cheap.
 
-Write tools declare the `admin:write` scope, so a read-only grant cannot reach them.
-
 ### Scopes and the write gate
 
-Two scopes: `admin:read` and `admin:write`. The consent page offers `admin:write` only
-when the user holds the `django_admin_fastmcp.write_via_mcp` permission, which a
-superuser grants through the normal user admin. Requesting write access stays a
-conversation with a superuser, not a checkbox. `WRITABLE_MODELS` (section 3) still gates
-writes server-wide, so both gates apply, as before.
+One scope: `admin`, meaning "act in the admin as this user". Scopes carry no
+authorization of their own; requested scopes are ignored and `admin` is always granted.
+What a grant may do is decided per call, by exactly two things:
+
+1. `WRITABLE_MODELS` (section 3), the deployment-level gate. A model outside the list
+   refuses every write and every action, whoever calls. This is how a deployment bans
+   writes to, say, an event-log model, whatever any user may do in the admin UI.
+2. The user's own admin permissions, asked through the `ModelAdmin` on every call.
+
+No `write_via_mcp` permission and no per-scope consent: one permission system, Django's.
+Whoever may change a model in the admin UI may change it over MCP, when the deployment
+lists that model as writable.
 
 ### Admin pages
 
@@ -616,9 +622,7 @@ log at `warning`. The prefix is safe to log. The secret never is.
 An admin MCP server for a superuser is a remote shell over the production database, driven
 by a language model. The rails are part of the specification, not an afterthought.
 
-1. **Read-only by default.** A grant carries `admin:write` only when the user holds the
-   `write_via_mcp` permission and approved that scope on the consent page.
-2. **Write allowlist.** `WRITABLE_MODELS` defaults to empty, which means no writes at all
+1. **Write allowlist.** `WRITABLE_MODELS` defaults to empty, which means no writes at all
    regardless of token scope. A deployment names the models it accepts writes for.
 3. **`DISABLED_TOOLS`** removes tools from the catalogue. A disabled tool is invisible in
    `tools/list` and unknown to `tools/call`.
@@ -664,7 +668,7 @@ The flow, driven with Django's test client against the OAuth views:
 - A reused code denies and revokes the grant it minted.
 - A wrong PKCE verifier denies. A `redirect_uri` not registered exactly denies.
 - The refresh token renews the access token and rotates itself.
-- The consent page offers `admin:write` only to a user holding `write_via_mcp`.
+- Requested scopes are ignored: every grant carries exactly the `admin` scope.
 
 The verifier, driven through MCP calls:
 
@@ -760,9 +764,9 @@ only the README.
 | # | Decision | Choice | Why |
 |---|---|---|---|
 | D1 | FastMCP 3 or 4 | 3.x stable now, 4.x when it leaves beta | Clients connect to 3.x today. No protocol code in the package, so the upgrade is a pin bump. |
-| D2 | Write access default | Off. The `admin:write` scope needs the `write_via_mcp` permission, plus the `WRITABLE_MODELS` allowlist. | Two independent gates. A leaked token alone cannot write. |
+| D2 | Write access | `WRITABLE_MODELS` is the only MCP-side gate; per-user authorization is the admin's own permissions, nothing else. | One permission system. The deployment bans whole models (an event log); Django permissions decide per user. |
 | D3 | Auth method | OAuth 2.1 code + PKCE, with the Django site as authorization server. Consent rides the admin session cookie in the browser. No manual token minting. | Zero-copy setup: `claude mcp add`, log in, approve. The cookie never touches the MCP transport, so remote clients work. Manual minting can return later as an escape hatch for headless clients. |
-| D4 | Who may authorize a client | Any staff user, for themselves only. The `admin:write` scope needs a superuser to grant `write_via_mcp` first. | Self-serve setup without privilege escalation. |
+| D4 | Who may authorize a client | Any staff user, for themselves only. The grant carries the user's own permissions, never more. | Self-serve setup without privilege escalation. |
 | D5 | Exposure default | Everything registered, minus the built-in denylist | Matches the goal. Consumers narrow it. |
 | D6 | Sync or async tools | Sync `def` | The admin API is sync-only. Async would mean `sync_to_async` around all of it. |
 | D7 | Per-model tools | No, eleven generic tools | 700 tools is unusable for any client. |
