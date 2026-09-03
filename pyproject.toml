@@ -47,6 +47,10 @@ dependencies = [
     "fastmcp>=3.4,<4",
 ]
 
+[project.optional-dependencies]
+sentry = ["sentry-sdk>=2.62"]
+logfire = ["logfire>=3.8"]
+
 [project.urls]
 Homepage = "https://github.com/edelvalle/django-admin-fastmcp"
 Repository = "https://github.com/edelvalle/django-admin-fastmcp.git"
@@ -69,11 +73,18 @@ lint = [
 devtools = [
     "uvicorn[standard]",
 ]
+observability = [
+    # The optional extras, installed in dev so tests exercise the real
+    # sentry/logfire code paths (SDKs stay inactive without a DSN).
+    "sentry-sdk>=2.62",
+    "logfire>=3.8",
+]
 dev = [
     { include-group = "test" },
     { include-group = "typing" },
     { include-group = "lint" },
     { include-group = "devtools" },
+    { include-group = "observability" },
 ]
 
 [tool.hatch.version]

@@ -53,10 +53,12 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
             "read the answer, then confirm."
         ),
     )
+    from django_admin_fastmcp.tracing import instrument
+
     disabled = set(conf.get("DISABLED_TOOLS"))
     for name, fn in all_tools().items():
         if name not in disabled:
-            server.tool(fn, name=f"{NAMESPACE}_{name}")
+            server.tool(instrument(name, fn), name=f"{NAMESPACE}_{name}")
     return server
 
 

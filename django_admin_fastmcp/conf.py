@@ -23,6 +23,11 @@ DEFAULTS: dict[str, Any] = {
     "MAX_PKS": 1000,
     "ACCESS_TOKEN_TTL_MINUTES": 60,
     "REFRESH_TOKEN_TTL_DAYS": 90,
+    # Observability (tracing.py). Each backend activates only when its
+    # library is importable AND its flag is on; these flags turn one off
+    # without uninstalling it.
+    "ENABLE_SENTRY_TRACING": True,
+    "ENABLE_LOGFIRE_TRACING": True,
     # Base URL of the Django site, the OAuth issuer. Used in discovery
     # metadata and advertised by the MCP server as its authorization server.
     "SITE_URL": "http://127.0.0.1:8000",
