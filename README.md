@@ -158,6 +158,8 @@ All keys live in the `ADMIN_FASTMCP` dict. An unknown key is an error at startup
 | `MAX_PKS` | `1000` | Cap on `pks` per `run_action`. |
 | `ACCESS_TOKEN_TTL_MINUTES` | `60` | Access token lifetime. Clients renew with the refresh token. |
 | `REFRESH_TOKEN_TTL_DAYS` | `90` | Refresh token lifetime. Re-consent happens this often. |
+| `ENABLE_SENTRY_TRACING` | `True` | Sentry spans and metrics, when `sentry-sdk` is installed and initialized. |
+| `ENABLE_LOGFIRE_TRACING` | `True` | Logfire spans and metrics, when `logfire` is installed and configured. |
 | `SITE_URL` | `"http://127.0.0.1:8000"` | Public URL of the Django site. It is the OAuth issuer, and the MCP server names it as its authorization server. |
 | `MCP_URL` | `"http://127.0.0.1:8765/admin/mcp"` | Public URL of the MCP endpoint. |
 
@@ -201,6 +203,76 @@ driven by a language model. The rails:
   whatever the settings say.
 - Keep `auth.Permission` and `auth.Group` out of `WRITABLE_MODELS`. An agent that can
   grant permissions can escape the permission model.
+
+## Observability
+
+The package instruments every tool call: a Sentry span or transaction named
+after the tool (`admin_search_objects`), tagged with the model, the Django
+user, the OAuth client, and the outcome (`ok`, `denied`, `error`); a counter
+and a duration distribution per tool; and one structured log record per call
+on the `django_admin_fastmcp` logger (denials at WARNING). Unexpected
+exceptions are captured with full context. Logfire is supported the same way.
+
+Both backends are optional. Nothing here runs unless the library is
+installed and initialized:
+
+```bash
+uv add "django-admin-fastmcp[sentry]"     # or [logfire], or both
+```
+
+### Setting up Sentry
+
+Initialize the SDK in `settings.py`, gated on the DSN, the same way a normal
+Django deployment does:
+
+```python
+SENTRY_DSN = env.get("SENTRY_DSN")
+
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=env.get("SENTRY_ENVIRONMENT", "production"),
+        integrations=[DjangoIntegration(), LoggingIntegration()],
+        traces_sample_rate=float(env.get("SENTRY_TRACES_SAMPLE_RATE", "0.5")),
+        # The spans tag the calling username. Keep this on if you want it.
+        send_default_pii=True,
+        enable_logs=True,
+    )
+
+ADMIN_FASTMCP = {
+    ...,
+    "ENABLE_SENTRY_TRACING": bool(SENTRY_DSN),
+}
+```
+
+That single init covers both processes. The web process reports the OAuth
+views through `DjangoIntegration` as usual. The `admin_mcp_serve` process
+loads the same settings, so the SDK is active there too; the package opens
+its own transaction per tool call, so tool traces appear without any ASGI
+integration. With `traces_sample_rate` above zero you get per-tool
+performance data; with `enable_logs` and the `LoggingIntegration`, the
+per-call log records land in Sentry Logs.
+
+What to look at in Sentry:
+
+- **Performance -> transactions** named `admin_<tool>`, op `mcp.tool`:
+  who calls what, how often, and how long it takes, filterable by the
+  `mcp.model`, `mcp.client`, and `mcp.outcome` tags and by user.
+- **Metrics**: `damf.<tool>.ok` / `.denied` / `.error` counters and
+  `damf.<tool>.duration_ms` distributions, for dashboards and alerts
+  (a spike in `.denied` is an agent probing where it should not).
+- **Issues**: real exceptions from tool calls, with the user, client, and
+  tool tags attached. Denials are not issues; they are the system working.
+
+For Logfire, call `logfire.configure()` in `settings.py`; the package stays
+silent until then, because an unconfigured logfire warns on every span.
+
+Two settings knobs, both default true, turn a backend off without
+uninstalling it: `ENABLE_SENTRY_TRACING` and `ENABLE_LOGFIRE_TRACING`.
 
 ## Deployment
 

@@ -17,6 +17,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Observability (`tracing.py`), mirroring djhtmx: optional Sentry and
+  Logfire extras. Every tool call gets a span or transaction tagged with
+  tool, model, user, client, and outcome, per-tool counters and duration
+  distributions, exception capture for real errors, and one structured log
+  record per call on the `django_admin_fastmcp` logger (denials at
+  WARNING). New settings: `ENABLE_SENTRY_TRACING`,
+  `ENABLE_LOGFIRE_TRACING`.
+
 - The OAuth 2.1 authorization server: dynamic client registration, PKCE
   consent flow riding the admin session, token exchange with refresh
   rotation, and revocation.

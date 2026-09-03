@@ -613,9 +613,16 @@ Every mutation writes a `LogEntry` through `ModelAdmin.log_addition`, `log_chang
 and the client, for example `"Changed status. Via MCP (client: Claude Code)."`, so the
 admin history page distinguishes an agent edit from a person's edit.
 
-A `django_admin_fastmcp` logger emits one structured record per call: access-token prefix,
-user id, client name, tool name, model label, primary keys, outcome, and duration. Denials
-log at `warning`. The prefix is safe to log. The secret never is.
+A `django_admin_fastmcp` logger emits one structured record per call: tool name, model
+label, user, client name, outcome, and duration. Denials log at `warning`. Secrets are
+never logged.
+
+`tracing.py` adds optional Sentry and Logfire instrumentation on the same wrapper,
+mirroring djhtmx: a span or transaction per tool call (op `mcp.tool`) tagged with tool,
+model, user, client, and outcome, per-tool counters and duration distributions, and
+exception capture for outcomes that are bugs rather than denials. Both backends are
+optional extras and activate only when installed, initialized, and not turned off by
+`ENABLE_SENTRY_TRACING` / `ENABLE_LOGFIRE_TRACING`.
 
 ### Rails
 
