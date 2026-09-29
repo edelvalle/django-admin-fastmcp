@@ -107,6 +107,17 @@ def check_settings(app_configs, **kwargs):
             )
         )
 
+    throttle_minutes = conf.get("LAST_USED_THROTTLE_MINUTES")
+    if type(throttle_minutes) is not int:
+        errors.append(
+            Error(
+                "ADMIN_FASTMCP['LAST_USED_THROTTLE_MINUTES'] must be an int, "
+                f"got {throttle_minutes!r}",
+                hint="use 0 or a negative value to turn last_used_at updates off",
+                id="django_admin_fastmcp.E007",
+            )
+        )
+
     writable = [w.lower() for w in conf.get("WRITABLE_MODELS")]
     for label in PERMISSION_MODELS:
         if label in writable:

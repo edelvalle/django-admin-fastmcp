@@ -158,6 +158,7 @@ All keys live in the `ADMIN_FASTMCP` dict. An unknown key is an error at startup
 | `MAX_PKS` | `1000` | Cap on `pks` per `run_action`. |
 | `ACCESS_TOKEN_TTL_MINUTES` | `60` | Access token lifetime. Clients renew with the refresh token. |
 | `REFRESH_TOKEN_TTL_DAYS` | `90` | Refresh token lifetime. Re-consent happens this often. |
+| `LAST_USED_THROTTLE_MINUTES` | `1` | Minimum gap between `last_used_at` writes on token verification. `0` or negative turns them off, so the MCP server can run on a read-only replica. |
 | `ENABLE_SENTRY_TRACING` | `True` | Sentry spans and metrics, when `sentry-sdk` is installed and initialized. |
 | `ENABLE_LOGFIRE_TRACING` | `True` | Logfire spans and metrics, when `logfire` is installed and configured. |
 | `SITE_URL` | `"http://127.0.0.1:8000"` | Public URL of the Django site. It is the OAuth issuer, and the MCP server names it as its authorization server. |

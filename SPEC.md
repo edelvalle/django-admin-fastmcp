@@ -238,6 +238,7 @@ startup rather than silently returning `None`.
 | `MAX_PKS` | `1000` | Cap on `pks` per `run_action`. |
 | `ACCESS_TOKEN_TTL_MINUTES` | `60` | Access token lifetime. Clients renew with the refresh token. |
 | `REFRESH_TOKEN_TTL_DAYS` | `90` | Refresh token lifetime. Re-consent happens this often. |
+| `LAST_USED_THROTTLE_MINUTES` | `1` | Minimum gap between `last_used_at` writes on token verification. `0` or negative turns them off, so the MCP server can run on a read-only replica. |
 | `SITE_URL` | `"http://127.0.0.1:8000"` | Public URL of the Django site, the OAuth issuer. |
 | `MCP_URL` | `"http://127.0.0.1:8765/admin/mcp"` | Public URL of the MCP endpoint. |
 
@@ -572,7 +573,7 @@ Verification of each MCP call runs in a FastMCP `TokenVerifier`:
 3. Compare hashes with `secrets.compare_digest`. A mismatch denies.
 4. Deny if revoked, expired, `not user.is_active`, or `not user.is_staff`.
 5. Return an `AccessToken` with `client_id = str(user.pk)` and the grant's scopes.
-6. Update `last_used_at` at most once per minute, to keep the write cheap.
+6. Update `last_used_at` at most once per `LAST_USED_THROTTLE_MINUTES`, to keep the write cheap.  `0` or negative skips the write.
 
 ### Scopes and the write gate
 

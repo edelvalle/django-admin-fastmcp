@@ -24,8 +24,6 @@ from django_admin_fastmcp.models import (
     split_wire_token,
 )
 
-LAST_USED_THROTTLE = timedelta(minutes=1)
-
 # Test hook: the in-memory MCP transport carries no HTTP bearer token, so the
 # test suite impersonates a user here. Production calls never set it.
 _impersonated: contextvars.ContextVar = contextvars.ContextVar(
@@ -71,7 +69,11 @@ class DjangoAdminTokenVerifier(TokenVerifier):
         expected_resource = conf.get("MCP_URL").rstrip("/")
         if grant.resource and grant.resource.rstrip("/") != expected_resource:
             return None
-        if grant.last_used_at is None or now - grant.last_used_at > LAST_USED_THROTTLE:
+        throttle_minutes = conf.get("LAST_USED_THROTTLE_MINUTES")
+        if throttle_minutes > 0 and (
+            grant.last_used_at is None
+            or now - grant.last_used_at > timedelta(minutes=throttle_minutes)
+        ):
             grant.last_used_at = now
             grant.save(update_fields=["last_used_at"])
         return AccessToken(

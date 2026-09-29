@@ -23,6 +23,9 @@ DEFAULTS: dict[str, Any] = {
     "MAX_PKS": 1000,
     "ACCESS_TOKEN_TTL_MINUTES": 60,
     "REFRESH_TOKEN_TTL_DAYS": 90,
+    # Minimum gap between last_used_at writes. 0 (or negative) turns them off, so the MCP server can
+    # run against a read-only replica.
+    "LAST_USED_THROTTLE_MINUTES": 1,
     # Observability (tracing.py). Each backend activates only when its
     # library is importable AND its flag is on; these flags turn one off
     # without uninstalling it.
