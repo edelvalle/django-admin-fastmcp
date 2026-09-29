@@ -7,6 +7,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-29
+
+### Added
+
+- `LAST_USED_THROTTLE_MINUTES` setting (default `1`): the minimum gap between `last_used_at` writes on token verification.  `0` or a negative value turns the write off, so a server with no write tools can run against a read-only database replica.  System check `E007` rejects values that are not an `int`.
+
 ## [0.1.1] - 2026-09-03
 
 First release.
