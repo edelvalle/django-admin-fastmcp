@@ -11,7 +11,7 @@ from collections.abc import Callable
 from fastmcp import FastMCP
 
 from django_admin_fastmcp import conf
-from django_admin_fastmcp.auth import build_auth
+from django_admin_fastmcp.auth import build_auth, with_fresh_connections
 
 MAX_BODY_BYTES = 256 * 1024
 NAMESPACE = "admin"
@@ -58,7 +58,7 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
     disabled = set(conf.get("DISABLED_TOOLS"))
     for name, fn in all_tools().items():
         if name not in disabled:
-            server.tool(instrument(name, fn), name=f"{NAMESPACE}_{name}")
+            server.tool(with_fresh_connections(instrument(name, fn)), name=f"{NAMESPACE}_{name}")
     return server
 
 

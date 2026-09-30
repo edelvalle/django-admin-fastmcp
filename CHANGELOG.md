@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- Close stale Django database connections before and after each tool call and each token verification ([#1](https://github.com/edelvalle/django-admin-fastmcp/issues/1)).  FastMCP never fires Django's request signals, so each worker thread kept its first connection forever: a broken connection stayed broken after a database restart, `CONN_MAX_AGE` and `CONN_HEALTH_CHECKS` had no effect, and pooled connections never returned to the pool.
+
 ## [0.1.2] - 2026-09-29
 
 ### Added

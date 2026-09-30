@@ -6,10 +6,12 @@ the authorization server.
 """
 
 import contextvars
+import functools
 from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections
 from django.utils import timezone
 from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
 from fastmcp.server.dependencies import get_access_token
@@ -31,6 +33,29 @@ _impersonated: contextvars.ContextVar = contextvars.ContextVar(
 )
 
 
+def with_fresh_connections(fn):
+    """Wrap the sync `fn` in the connection lifecycle of a Django request.
+
+    FastMCP is not Django's request handler, so the `request_started` and
+    `request_finished` signals never fire and nothing else closes stale
+    connections.  Without this, each worker thread keeps its first connection
+    forever: a broken one stays broken, `CONN_MAX_AGE` and health checks never
+    apply, and a pooled one never returns to the pool.  The wrapper must run
+    in the worker thread that owns the connection, not on the event loop.
+
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        close_old_connections()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            close_old_connections()
+
+    return wrapper
+
+
 class impersonate:
     """Context manager for tests: run tool calls as `user`."""
 
@@ -49,7 +74,7 @@ class DjangoAdminTokenVerifier(TokenVerifier):
     """Verify a wire token against McpToken. Every failure path denies."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        return await sync_to_async(self.verify_token_sync)(token)
+        return await sync_to_async(with_fresh_connections(self.verify_token_sync))(token)
 
     def verify_token_sync(self, token: str) -> AccessToken | None:
         parts = split_wire_token(token)
