@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-11
+
+### Fixed
+
+- `get_object`, `search_objects` and declared tools that return a model instance serialize a `JSONField` value as JSON.  Before, dicts and lists went through `str()` and reached the agent as their Python repr (`{'ok': True}`).
+
 ## [0.2.0] - 2026-11-11
 
 ### Added

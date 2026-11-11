@@ -33,6 +33,11 @@ def scalar(value: Any) -> Any:
         return value.decode("utf-8", errors="replace")
     if value is None or isinstance(value, bool | int | float | str):
         return value
+    # A JSONField holds dicts and lists: keep them as JSON, not as their Python repr.
+    if isinstance(value, dict):
+        return {str(k): scalar(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [scalar(v) for v in value]
     return str(value)
 
 

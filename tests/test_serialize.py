@@ -1,6 +1,7 @@
 """Serialization matrix (SPEC.md sections 7 and 11)."""
 
 from django_admin_fastmcp.auth import impersonate
+from django_admin_fastmcp.serialize import scalar
 from django_admin_fastmcp.tools.read import get_object
 
 
@@ -36,3 +37,9 @@ def test_readonly_fields_are_flagged_and_admin_url_present(superuser, books):
     assert data["admin_url"] == f"/admin/demo/book/{books['plain'].pk}/change/"
     # dates serialize as ISO 8601 strings
     assert "T" in data["fields"]["created_at"]
+
+
+def test_json_values_stay_json_not_their_python_repr():
+    """A JSONField holds dicts and lists; str() would give `{'a': True}`."""
+    value = {"tag": "OK", "ok": True, "items": [1, None, {"n": 2.5}], 3: ("x",)}
+    assert scalar(value) == {"tag": "OK", "ok": True, "items": [1, None, {"n": 2.5}], "3": ["x"]}
