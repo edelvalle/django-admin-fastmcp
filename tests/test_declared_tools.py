@@ -105,7 +105,10 @@ def test_fastmcp_builds_the_schema_from_the_method_signature():
     assert set(schema["required"]) == {"pk", "title"}
     assert tools["admin_demo_book_retitle"].description == "Give a book a new title."
     count = tools["admin_demo_book_count_books"].inputSchema
-    assert set(count["properties"]) == {"published"}
+    # `datetime` is imported only in the demo admin, which postpones its annotations:
+    # the hint resolves there, not in the library's module.
+    assert set(count["properties"]) == {"published", "created_after"}
+    assert {"type": "string", "format": "date-time"} in count["properties"]["created_after"]["anyOf"]
     assert "required" not in count or count["required"] == []
 
 

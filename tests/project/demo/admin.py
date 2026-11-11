@@ -1,4 +1,11 @@
-"""ModelAdmins built to exercise the permission matrix (SPEC.md section 11)."""
+"""ModelAdmins built to exercise the permission matrix (SPEC.md section 11).
+
+Postponed annotations on purpose: a declared tool must resolve its hints in this module.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
 
 from django.contrib import admin
 from django.core.exceptions import ValidationError
@@ -59,11 +66,15 @@ class BookAdmin(admin.ModelAdmin):
         return book
 
     @mcp_tool
-    def count_books(self, request, published: bool | None = None) -> dict:
+    def count_books(
+        self, request, published: bool | None = None, created_after: datetime | None = None
+    ) -> dict:
         """How many books the caller can see, published or not."""
         queryset = self.get_queryset(request)
         if published is not None:
             queryset = queryset.filter(published=published)
+        if created_after is not None:
+            queryset = queryset.filter(created_at__gt=created_after)
         return {"count": queryset.count()}
 
 
