@@ -34,6 +34,7 @@ as `<app_label>_<model_name>_<tool name>`.
 """
 
 import inspect
+import typing
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -132,8 +133,14 @@ def available_tools(model_admin: ModelAdmin, request) -> dict[str, str]:
 def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
     """The tool function FastMCP registers: the method's own parameters, the gates
     of a write around the call."""
+    # Resolve the hints in the module of the method: with postponed annotations they
+    # are strings, and the wrapper lives in this module, where those names do not exist.
+    hints = typing.get_type_hints(method)
     signature = inspect.signature(method)
-    parameters = list(signature.parameters.values())[2:]  # drop self and request
+    parameters = [
+        parameter.replace(annotation=hints.get(parameter.name, parameter.annotation))
+        for parameter in list(signature.parameters.values())[2:]  # drop self and request
+    ]
 
     def tool(**kwargs: Any) -> Any:
         user = current_user()
@@ -172,9 +179,7 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
         parameters=parameters, return_annotation=inspect.Signature.empty
     )
     annotations = {
-        name: hint
-        for name, hint in method.__annotations__.items()
-        if name not in ("self", "request", "return")
+        name: hint for name, hint in hints.items() if name not in ("self", "request", "return")
     }
     wrapper.__annotations__ = annotations
     # Python 3.14 evaluates annotations lazily through `__annotate__`, and that is what
