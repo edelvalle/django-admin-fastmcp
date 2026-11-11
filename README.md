@@ -171,6 +171,54 @@ Its path defaults to `/admin/mcp`. A startup check refuses a `MCP_URL` with no
 path, because then the whole origin would be advertised as the protected
 resource.
 
+### Declared tools
+
+Some models do not change through a form: a tree node is created through its parent,
+an event-sourced aggregate only through its events. A `ModelAdmin` declares a tool for
+each such operation with `@mcp_tool`, next to the model it acts on, the way
+`@admin.action` declares an action:
+
+```python
+from django_admin_fastmcp.tools.declared import mcp_tool
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    mcp_generic_writes = False  # rows change only through the tools below
+
+    @mcp_tool(write=True)
+    def add_line(self, request, order_pk: str, sku: str, quantity: int = 1) -> Order:
+        """Add a line to an order."""
+        order = self.get_queryset(request).get(pk=order_pk)
+        order.lines.create(sku=sku, quantity=quantity)
+        self.message_user(request, f"Added {sku} to {order}.")
+        return order
+
+    @mcp_tool
+    def open_orders(self, request) -> dict:
+        """How many orders the caller can see are still open."""
+        return {"count": self.get_queryset(request).filter(closed=False).count()}
+```
+
+The method takes `self`, the synthetic admin `request`, then its own typed parameters,
+which become the tool's input schema. Its docstring is the description the agent
+reads. It returns a model instance (serialized like `get_object` and logged as a
+change), a JSON-able dict, or `None`. `message_user` messages reach the caller.
+
+A tool reads by default and needs the view permission on the model. A tool declared
+with `write=True` has the gates of a generic write: the model in `WRITABLE_MODELS` and
+the change permission. Both need a staff user and an exposed model. The call runs in a
+transaction, so a method that raises leaves nothing behind, and a `ValidationError`
+becomes a tool error with its messages. Row-level rules stay the method's own:
+`self.get_queryset(request)` hides what the caller may not see, and
+`self.has_change_permission(request, obj)` refuses what the caller may not change.
+
+The wire name is `admin_<app_label>_<model_name>_<tool>`, for example
+`admin_shop_order_add_line`. `describe_model` lists the tools the caller may run under
+`tools`. `DISABLED_TOOLS` names one as `shop_order_add_line`.
+
+Declare a handful per model, for what the form cannot express. The generic tools stay
+the way to read and to write ordinary rows.
+
 ## Per-ModelAdmin knobs
 
 Set these on a `ModelAdmin` class, no mixin needed:
@@ -180,6 +228,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     mcp_expose = False                     # hide this model from MCP entirely
     mcp_fields = ("number", "total")       # allowlist of serialized fields
     mcp_exclude_fields = ("internal_note",)  # denylist of serialized fields
+    mcp_generic_writes = False             # no create/update/delete rows; declared tools only
 ```
 
 `REDACT_FIELDS` wins over `mcp_fields`. Listing a password field explicitly does not

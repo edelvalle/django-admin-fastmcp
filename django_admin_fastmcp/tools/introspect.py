@@ -10,6 +10,7 @@ from django_admin_fastmcp.auth import current_user
 from django_admin_fastmcp.request import admin_request
 from django_admin_fastmcp.serialize import concrete_fields
 from django_admin_fastmcp.tools import resolve
+from django_admin_fastmcp.tools.declared import available_tools
 
 
 def _changelist_url(model) -> str | None:
@@ -117,4 +118,5 @@ def describe_model(model: str) -> dict[str, Any]:
         ],
         "reverse_relations": reverse_relations,
         "actions": actions,
+        "tools": available_tools(model_admin, request),
     }

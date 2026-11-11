@@ -14,7 +14,7 @@ from django_admin_fastmcp.auth import client_name, current_user
 from django_admin_fastmcp.errors import ToolError, denied
 from django_admin_fastmcp.request import collected_messages
 from django_admin_fastmcp.serialize import serialize_instance
-from django_admin_fastmcp.tools import require_write, resolve
+from django_admin_fastmcp.tools import require_generic_writes, require_write, resolve
 from django_admin_fastmcp.tools.read import _get_visible
 
 
@@ -68,6 +68,7 @@ def create_object(model: str, data: dict[str, Any]) -> dict[str, Any]:
     user = current_user()
     require_write(model)
     _, model_admin, request = resolve(user, model, "add")
+    require_generic_writes(model_admin, model)
 
     form_class = model_admin.get_form(request)
     _check_field_names(form_class, data, model)
@@ -97,6 +98,7 @@ def update_object(model: str, pk: str, data: dict[str, Any]) -> dict[str, Any]:
     user = current_user()
     require_write(model)
     model_class, model_admin, request = resolve(user, model, "change")
+    require_generic_writes(model_admin, model)
     obj = _get_visible(model_admin.get_queryset(request), model_class, pk)
     if not model_admin.has_change_permission(request, obj):
         raise denied(f"no change permission on this {model} object")
@@ -159,6 +161,7 @@ def delete_object(model: str, pk: str, confirm: bool = False) -> dict[str, Any]:
     user = current_user()
     require_write(model)
     model_class, model_admin, request = resolve(user, model, "delete")
+    require_generic_writes(model_admin, model)
     obj = _get_visible(model_admin.get_queryset(request), model_class, pk)
     if not model_admin.has_delete_permission(request, obj):
         raise denied(f"no delete permission on this {model} object")

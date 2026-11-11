@@ -36,6 +36,13 @@ def all_tools() -> dict[str, Callable]:
     }
 
 
+def declared() -> dict[str, tuple[Callable, str]]:
+    """The tools the ModelAdmins declare (tools/declared.py), keyed like `all_tools`."""
+    from django_admin_fastmcp.tools.declared import declared_tools
+
+    return declared_tools()
+
+
 def build_server(*, with_auth: bool = True) -> FastMCP:
     """Assemble the FastMCP server.
 
@@ -59,6 +66,12 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
     for name, fn in all_tools().items():
         if name not in disabled:
             server.tool(with_fresh_connections(instrument(name, fn)), name=f"{NAMESPACE}_{name}")
+    for name, (fn, model) in declared().items():
+        if name not in disabled:
+            server.tool(
+                with_fresh_connections(instrument(name, fn, model=model)),
+                name=f"{NAMESPACE}_{name}",
+            )
     return server
 
 

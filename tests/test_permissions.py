@@ -119,7 +119,8 @@ def test_the_wire_catalogue_is_static_per_user(superuser, viewer):
         as_viewer = asyncio.run(tool_names())
     assert as_superuser == as_viewer
     assert "admin_list_models" in as_superuser
-    assert len(as_superuser) == 11
+    # The eleven generic tools plus the two the demo BookAdmin declares.
+    assert len(as_superuser) == 13
 
 
 # transaction=True: the MCP client runs the sync tool in a worker thread,
@@ -154,4 +155,4 @@ def test_disabled_tools_vanish_from_the_catalogue(settings, superuser):
     with impersonate(superuser):
         names = asyncio.run(tool_names())
     assert "admin_delete_object" not in names
-    assert len(names) == 10
+    assert len(names) == 12  # one generic tool disabled, the two declared ones stay
