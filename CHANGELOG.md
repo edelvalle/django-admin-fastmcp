@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-11
+
+### Added
+
+- Declared tools.  A `ModelAdmin` method decorated with `@mcp_tool` becomes an MCP tool, next to the model it acts on, the way `@admin.action` declares an action.  The method takes `self`, the synthetic admin `request` and its own typed parameters, which become the input schema; its docstring is the description.  It returns a model instance (serialized and logged as a change), a dict, or `None`.  A tool reads by default and needs the view permission on the model; `write=True` gives it the gates of a generic write: `WRITABLE_MODELS` and the change permission.  Wire name `admin_<app_label>_<model_name>_<tool>`; `describe_model` lists the tools the caller may run under `tools`; `DISABLED_TOOLS` removes one.  For models whose rows change only through such tools (a tree, an event-sourced aggregate).
+- `mcp_generic_writes = False` on a `ModelAdmin` refuses `create_object`, `update_object` and `delete_object` for that model while its declared tools keep working.
+- `instrument(name, fn, model=...)` tags the spans and the audit line of a declared tool with its model.
+
 ## [0.1.3] - 2026-09-30
 
 ### Fixed

@@ -151,17 +151,21 @@ def _sentry_user_scope(user_id: str, username: str, tags: dict[str, str]):
         yield
 
 
-def instrument(tool_name: str, fn: Callable) -> Callable:
-    """Wrap one tool function with spans, metrics, and the audit log record."""
+def instrument(tool_name: str, fn: Callable, *, model: str | None = None) -> Callable:
+    """Wrap one tool function with spans, metrics, and the audit log record.
+
+    A generic tool names its model in the `model` argument of each call; a declared tool
+    acts on one model, given here.
+    """
     wire_name = f"admin_{tool_name}"
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         user_id, username, client = _caller_identity()
-        model = str(kwargs.get("model", ""))
+        model_label = model if model is not None else str(kwargs.get("model", ""))
         tags = {"mcp.tool": wire_name, "mcp.client": client}
-        if model:
-            tags["mcp.model"] = model
+        if model_label:
+            tags["mcp.model"] = model_label
 
         outcome = "ok"
         started = time.perf_counter()
@@ -188,14 +192,14 @@ def instrument(tool_name: str, fn: Callable) -> Callable:
                 logging.INFO if outcome == "ok" else logging.WARNING,
                 "tool=%s model=%s user=%s client=%s outcome=%s duration_ms=%.1f",
                 wire_name,
-                model or "-",
+                model_label or "-",
                 username,
                 client,
                 outcome,
                 duration_ms,
                 extra={
                     "mcp_tool": wire_name,
-                    "mcp_model": model,
+                    "mcp_model": model_label,
                     "mcp_user_id": user_id,
                     "mcp_user": username,
                     "mcp_client": client,

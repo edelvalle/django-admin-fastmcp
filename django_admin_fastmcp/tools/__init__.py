@@ -36,6 +36,13 @@ def resolve(user, label: str, action: Action) -> tuple[type[Model], ModelAdmin, 
     return model, model_admin, request
 
 
+def require_generic_writes(model_admin: ModelAdmin, label: str) -> None:
+    """A ModelAdmin with `mcp_generic_writes = False` refuses create_object, update_object
+    and delete_object: its rows change only through the tools it declares."""
+    if getattr(model_admin, "mcp_generic_writes", True) is False:
+        raise denied(f"model {label} changes only through its declared tools")
+
+
 def require_write(label: str) -> None:
     """The deployment-level write gate (SPEC.md section 9).
 

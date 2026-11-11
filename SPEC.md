@@ -302,6 +302,26 @@ on. That keeps names unique when a consumer aggregates several MCP servers.
 Every returned row carries `pk` as a string and an `admin_url`, so the model can hand a
 person a link into the real admin.
 
+### Declared tools
+
+The generic tools write rows through the admin form. A model whose rows change another
+way (a tree node through its parent, an aggregate through its events) declares a tool
+per operation on its `ModelAdmin` with `@mcp_tool`, like `@admin.action`. The method
+takes `self`, the synthetic `request` and its own typed parameters, which become the
+input schema; its docstring is the description. It returns a model instance
+(serialized, logged as a change), a dict, or `None`.
+
+A tool reads by default (view permission). `write=True` gives it the gates of a generic
+write: `WRITABLE_MODELS` and the change permission. Both need a staff user and an
+exposed model. The run is a transaction; `ValidationError` becomes a tool error.
+Row-level rules are the method's own. Wire name `admin_<app_label>_<model_name>_<tool>`; `describe_model` lists the ones
+the caller may run under `tools`; `DISABLED_TOOLS` removes one by its catalogue name.
+`mcp_generic_writes = False` on the `ModelAdmin` refuses the three generic writes for
+that model.
+
+This is not the per-model CRUD that D7 rejects: a declared tool is opt-in, named, and
+rare, one per operation the form cannot express.
+
 Tool docstrings are the model's only documentation. Write them for a reader who has never
 seen this Django project. State what the tool does, what the arguments mean, and what it
 refuses.
@@ -778,4 +798,5 @@ only the README.
 | D5 | Exposure default | Everything registered, minus the built-in denylist | Matches the goal. Consumers narrow it. |
 | D6 | Sync or async tools | Sync `def` | The admin API is sync-only. Async would mean `sync_to_async` around all of it. |
 | D7 | Per-model tools | No, eleven generic tools | 700 tools is unusable for any client. |
+| D9 | Operations the admin form cannot express | Declared tools on the `ModelAdmin` (`@mcp_tool`), same gates and audit as the generic writes; `mcp_generic_writes = False` where rows must not change through the form. | A tree or an event log cannot be written row by row. Keeping the operation next to its model keeps the admin's permissions and log in charge, and the catalogue stays small: one tool per operation, not four per model. |
 | D8 | Should a superuser token be capped | Open | An unrestricted superuser token is the stated requirement and also a remote shell. Revisit after M2, once the audit log shows how the tools get used. |

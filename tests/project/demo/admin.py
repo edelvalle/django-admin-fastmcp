@@ -1,6 +1,9 @@
 """ModelAdmins built to exercise the permission matrix (SPEC.md section 11)."""
 
 from django.contrib import admin
+from django.core.exceptions import ValidationError
+
+from django_admin_fastmcp.tools.declared import mcp_tool
 
 from .models import ApiCredential, Author, Book, SecretProject
 
@@ -41,6 +44,27 @@ class BookAdmin(admin.ModelAdmin):
     def publish_books(self, request, queryset):
         updated = queryset.update(published=True)
         self.message_user(request, f"Published {updated} book(s).")
+
+    @mcp_tool(write=True)
+    def retitle(self, request, pk: str, title: str) -> Book:
+        """Give a book a new title."""
+        book = self.get_queryset(request).get(pk=pk)
+        if not self.has_change_permission(request, book):
+            raise PermissionError("locked")
+        if not title.strip():
+            raise ValidationError({"title": ["A title cannot be empty."]})
+        book.title = title
+        book.save(update_fields=["title"])
+        self.message_user(request, f"Retitled {book.pk} through BookAdmin.")
+        return book
+
+    @mcp_tool
+    def count_books(self, request, published: bool | None = None) -> dict:
+        """How many books the caller can see, published or not."""
+        queryset = self.get_queryset(request)
+        if published is not None:
+            queryset = queryset.filter(published=published)
+        return {"count": queryset.count()}
 
 
 @admin.register(ApiCredential)
