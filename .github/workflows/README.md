@@ -6,7 +6,7 @@ This directory contains GitHub Actions workflows for automated code quality chec
 
 ### `ci.yml` - Continuous Integration
 
-**Triggers**: Push to main, Pull Requests against main
+**Triggers**: Pull Requests against main
 
 **Jobs**:
 
