@@ -33,6 +33,7 @@ The wire name is `admin_<app_label>_<model_name>_<tool name>`; `DISABLED_TOOLS` 
 as `<app_label>_<model_name>_<tool name>`.
 """
 
+import contextlib
 import inspect
 import typing
 from collections.abc import Callable
@@ -186,10 +187,8 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
     # `functools.wraps` carries to the tracing and connection wrappers around this
     # function, so it must answer with the same mapping.  Older Pythons copy
     # `__annotations__` and have no `__annotate__` to set.
-    try:
+    with contextlib.suppress(AttributeError):
         wrapper.__annotate__ = lambda format: dict(annotations)
-    except AttributeError:
-        pass
     return wrapper
 
 
