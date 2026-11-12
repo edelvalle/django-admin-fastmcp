@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-format:
+    runs-on: ubuntu-latest
+    name: "Lint & Format Check"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.13.7"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.14
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Check formatting and linting
+      run: make lint
+
+  type-check:
+    runs-on: ubuntu-latest
+    name: "Type Check"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.13.7"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.14
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Run type checking
+      run: make typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    name: "Tests & Coverage (py${{ matrix.python-version }})"
+    needs: [lint-and-format]  # Only run if linting passes
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and the newest Python that pyproject.toml supports.
+        python-version: ["3.11", "3.14"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.13.7"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: make install PYTHON_VERSION=${{ matrix.python-version }}
+
+    - name: Run tests with coverage
+      run: make coverage
