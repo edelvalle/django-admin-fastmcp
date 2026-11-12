@@ -14,7 +14,7 @@ from django.db.models import Model
 from django.http import HttpRequest
 
 from django_admin_fastmcp import exposure
-from django_admin_fastmcp.errors import ToolError, denied
+from django_admin_fastmcp.errors import ToolRefusalError, denied
 from django_admin_fastmcp.request import admin_request
 
 Action = Literal["view", "add", "change", "delete"]
@@ -25,11 +25,11 @@ def resolve(user, label: str, action: Action) -> tuple[type[Model], ModelAdmin, 
     if not (user.is_active and user.is_staff):
         raise denied("not a staff user")
     if not exposure.is_exposed(label):
-        raise ToolError(f"model {label} is not exposed")
+        raise ToolRefusalError(f"model {label} is not exposed")
     model = apps.get_model(label)  # is_exposed already resolved it
     model_admin = exposure.admin_site()._registry.get(model)
     if model_admin is None:
-        raise ToolError(f"model {label} is not registered in the admin")
+        raise ToolRefusalError(f"model {label} is not registered in the admin")
     request = admin_request(user, model_admin, method="GET" if action == "view" else "POST")
     if not getattr(model_admin, f"has_{action}_permission")(request):
         raise denied(f"no {action} permission on {label}")
@@ -64,7 +64,7 @@ def validate_lookup_path(model: type[Model], lookup: str) -> None:
     segments = lookup.removeprefix("-").split("__")
     field_names = {f.name for f in concrete_fields(model)}
     if segments[0] not in field_names:
-        raise ToolError(f"unknown field {segments[0]!r} on {exposure.label_of(model)}")
+        raise ToolRefusalError(f"unknown field {segments[0]!r} on {exposure.label_of(model)}")
     for segment in segments:
         if exposure.is_redacted(segment):
             raise denied(f"cannot filter or order by redacted field {segment!r}")

@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Refusals and invalid calls (permission denials, objects not found, models not exposed, unknown fields, invalid filters, failed validation, and so on) raise `ToolRefusalError`, a `ToolError` that FastMCP logs at INFO.  Before, FastMCP logged each of them at ERROR on `fastmcp.server.server`, and Sentry's logging integration reported them as errors.  Unexpected exceptions in a tool still log at ERROR and reach Sentry.
+
 ## [0.2.2] - 2026-11-11
 
 ### Fixed

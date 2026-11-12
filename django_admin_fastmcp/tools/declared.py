@@ -33,6 +33,7 @@ The wire name is `admin_<app_label>_<model_name>_<tool name>`; `DISABLED_TOOLS` 
 as `<app_label>_<model_name>_<tool name>`.
 """
 
+import contextlib
 import inspect
 import typing
 from collections.abc import Callable
@@ -47,7 +48,7 @@ from django.db.models import Model
 
 from django_admin_fastmcp import exposure
 from django_admin_fastmcp.auth import current_user
-from django_admin_fastmcp.errors import ToolError
+from django_admin_fastmcp.errors import ToolError, ToolRefusalError
 from django_admin_fastmcp.request import collected_messages
 from django_admin_fastmcp.serialize import serialize_instance
 from django_admin_fastmcp.tools import Action, require_write, resolve
@@ -153,7 +154,7 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
                 if isinstance(result, Model):
                     _log_change(request, result, meta.name)
         except ValidationError as error:
-            raise ToolError(f"validation failed: {_messages(error)}") from None
+            raise ToolRefusalError(f"validation failed: {_messages(error)}") from None
         if isinstance(result, Model):
             payload: dict[str, Any] = serialize_instance(result, model_admin, request)
         elif result is None:
@@ -186,10 +187,8 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
     # `functools.wraps` carries to the tracing and connection wrappers around this
     # function, so it must answer with the same mapping.  Older Pythons copy
     # `__annotations__` and have no `__annotate__` to set.
-    try:
+    with contextlib.suppress(AttributeError):
         wrapper.__annotate__ = lambda format: dict(annotations)
-    except AttributeError:
-        pass
     return wrapper
 
 

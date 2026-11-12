@@ -37,9 +37,12 @@ def test_a_successful_call_logs_one_info_record(caplog, superuser, books):
 
 def test_a_denial_logs_warning_and_the_error_still_propagates(caplog, viewer, credential):
     wrapped = instrument("get_object", get_object)
-    with caplog.at_level(logging.INFO, logger="django_admin_fastmcp"), impersonate(viewer):
-        with pytest.raises(ToolError, match="no view permission"):
-            wrapped(model="demo.ApiCredential", pk=str(credential.pk))
+    with (
+        caplog.at_level(logging.INFO, logger="django_admin_fastmcp"),
+        impersonate(viewer),
+        pytest.raises(ToolError, match="no view permission"),
+    ):
+        wrapped(model="demo.ApiCredential", pk=str(credential.pk))
     (record,) = records(caplog)
     assert record.levelno == logging.WARNING
     assert record.mcp_outcome == "denied"
@@ -47,9 +50,11 @@ def test_a_denial_logs_warning_and_the_error_still_propagates(caplog, viewer, cr
 
 def test_an_unauthenticated_call_still_gets_a_record(caplog, db):
     wrapped = instrument("get_object", get_object)
-    with caplog.at_level(logging.INFO, logger="django_admin_fastmcp"):
-        with pytest.raises(ToolError, match="no authenticated user"):
-            wrapped(model="demo.Book", pk="1")
+    with (
+        caplog.at_level(logging.INFO, logger="django_admin_fastmcp"),
+        pytest.raises(ToolError, match="no authenticated user"),
+    ):
+        wrapped(model="demo.Book", pk="1")
     (record,) = records(caplog)
     assert record.mcp_user == "anonymous"
     assert record.mcp_outcome == "denied"
@@ -60,9 +65,12 @@ def test_a_bug_logs_outcome_error_and_reraises(caplog, superuser, db):
         raise ValueError("boom")
 
     wrapped = instrument("broken", broken)
-    with caplog.at_level(logging.INFO, logger="django_admin_fastmcp"), impersonate(superuser):
-        with pytest.raises(ValueError, match="boom"):
-            wrapped(model="demo.Book")
+    with (
+        caplog.at_level(logging.INFO, logger="django_admin_fastmcp"),
+        impersonate(superuser),
+        pytest.raises(ValueError, match="boom"),
+    ):
+        wrapped(model="demo.Book")
     (record,) = records(caplog)
     assert record.mcp_outcome == "error"
 

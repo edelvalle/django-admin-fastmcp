@@ -1,8 +1,10 @@
 """Authorization matrix (SPEC.md sections 5 and 11)."""
 
 import asyncio
+import logging
 
 import pytest
+from fastmcp import Client
 
 from django_admin_fastmcp.auth import impersonate
 from django_admin_fastmcp.errors import ToolError
@@ -140,6 +142,31 @@ def test_calls_work_through_a_real_mcp_client(superuser, books):
         data = asyncio.run(call())
     assert data["total"] == 1
     assert data["rows"][0]["fields"]["title"] == "Plain"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_refusal_through_a_real_mcp_client_does_not_log_at_error(
+    caplog, monkeypatch, viewer, credential
+):
+    """FastMCP logs a tool's ToolError at its log_level; Sentry reports ERROR records."""
+    # fastmcp's root logger does not propagate; caplog listens on the root logger.
+    monkeypatch.setattr(logging.getLogger("fastmcp"), "propagate", True)
+
+    async def call():
+        async with Client(build_server(with_auth=False)) as client:
+            return await client.call_tool(
+                "admin_get_object",
+                {"model": "demo.ApiCredential", "pk": str(credential.pk)},
+                raise_on_error=False,
+            )
+
+    with caplog.at_level(logging.DEBUG, logger="fastmcp"), impersonate(viewer):
+        result = asyncio.run(call())
+    assert result.is_error
+    assert "no view permission" in result.content[0].text
+    fastmcp_records = [r for r in caplog.records if r.name.startswith("fastmcp")]
+    assert any("admin_get_object" in r.getMessage() for r in fastmcp_records)
+    assert all(r.levelno < logging.ERROR for r in fastmcp_records)
 
 
 @pytest.mark.django_db
