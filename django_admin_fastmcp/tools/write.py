@@ -11,7 +11,7 @@ from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
 from django.db import transaction
 
 from django_admin_fastmcp.auth import client_name, current_user
-from django_admin_fastmcp.errors import ToolError, denied
+from django_admin_fastmcp.errors import ToolRefusalError, denied
 from django_admin_fastmcp.request import collected_messages
 from django_admin_fastmcp.serialize import serialize_instance
 from django_admin_fastmcp.tools import require_generic_writes, require_write, resolve
@@ -41,18 +41,18 @@ def _via_mcp(text: str) -> str:
     return f"{text} Via MCP (client: {client_name()})."
 
 
-def _form_errors(form) -> ToolError:
+def _form_errors(form) -> ToolRefusalError:
     errors = {
         field: [e["message"] for e in field_errors]
         for field, field_errors in form.errors.get_json_data().items()
     }
-    return ToolError(f"validation failed: {errors}")
+    return ToolRefusalError(f"validation failed: {errors}")
 
 
 def _check_field_names(form_class, data: dict[str, Any], label: str) -> None:
     unknown = set(data) - set(form_class.base_fields)
     if unknown:
-        raise ToolError(f"unknown fields for {label}: {sorted(unknown)}")
+        raise ToolRefusalError(f"unknown fields for {label}: {sorted(unknown)}")
 
 
 def create_object(model: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +114,7 @@ def update_object(model: str, pk: str, data: dict[str, Any]) -> dict[str, Any]:
     full_form_class = model_admin.get_form(request, obj, change=True)
     unknown = set(data) - set(full_form_class.base_fields) - readonly
     if unknown:
-        raise ToolError(f"unknown fields for {model}: {sorted(unknown)}")
+        raise ToolRefusalError(f"unknown fields for {model}: {sorted(unknown)}")
     fields = [name for name in data if name not in readonly]
     if fields:
         form_class = model_admin.get_form(request, obj, change=True, fields=fields)
@@ -172,7 +172,7 @@ def delete_object(model: str, pk: str, confirm: bool = False) -> dict[str, Any]:
     if preview["perms_needed"]:
         raise denied(f"cascade needs permissions you lack: {preview['perms_needed']}")
     if preview["protected"]:
-        raise ToolError(f"protected relations prevent deletion: {preview['protected']}")
+        raise ToolRefusalError(f"protected relations prevent deletion: {preview['protected']}")
     object_repr = str(obj)
     with transaction.atomic():
         _log(request, obj, DELETION, _via_mcp("Deleted."))

@@ -13,7 +13,7 @@ from django.db.models import Model
 
 from django_admin_fastmcp import conf, exposure
 from django_admin_fastmcp.auth import current_user
-from django_admin_fastmcp.errors import ToolError, not_found
+from django_admin_fastmcp.errors import ToolRefusalError, not_found
 from django_admin_fastmcp.serialize import serialize_instance
 from django_admin_fastmcp.tools import resolve, validate_lookup_path
 
@@ -59,14 +59,14 @@ def search_objects(
         try:
             queryset = queryset.filter(**filters)
         except (FieldError, ValueError, ValidationError) as error:
-            raise ToolError(f"invalid filters: {error}") from None
+            raise ToolRefusalError(f"invalid filters: {error}") from None
     if order_by:
         for key in order_by:
             validate_lookup_path(model_class, key)
         try:
             queryset = queryset.order_by(*order_by)
         except FieldError as error:
-            raise ToolError(f"invalid order_by: {error}") from None
+            raise ToolRefusalError(f"invalid order_by: {error}") from None
 
     page = max(page, 1)
     page_size = max(1, min(page_size, conf.get("MAX_PAGE_SIZE")))

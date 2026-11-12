@@ -47,7 +47,7 @@ from django.db.models import Model
 
 from django_admin_fastmcp import exposure
 from django_admin_fastmcp.auth import current_user
-from django_admin_fastmcp.errors import ToolError
+from django_admin_fastmcp.errors import ToolError, ToolRefusalError
 from django_admin_fastmcp.request import collected_messages
 from django_admin_fastmcp.serialize import serialize_instance
 from django_admin_fastmcp.tools import Action, require_write, resolve
@@ -153,7 +153,7 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
                 if isinstance(result, Model):
                     _log_change(request, result, meta.name)
         except ValidationError as error:
-            raise ToolError(f"validation failed: {_messages(error)}") from None
+            raise ToolRefusalError(f"validation failed: {_messages(error)}") from None
         if isinstance(result, Model):
             payload: dict[str, Any] = serialize_instance(result, model_admin, request)
         elif result is None:

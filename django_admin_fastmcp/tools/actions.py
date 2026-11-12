@@ -12,7 +12,7 @@ from django.http import HttpResponse
 
 from django_admin_fastmcp import conf
 from django_admin_fastmcp.auth import current_user
-from django_admin_fastmcp.errors import ToolError, denied
+from django_admin_fastmcp.errors import ToolRefusalError, denied
 from django_admin_fastmcp.request import collected_messages
 from django_admin_fastmcp.tools import require_write, resolve
 
@@ -30,7 +30,7 @@ def run_action(model: str, action: str, pks: list[str], confirm: bool = False) -
     user = current_user()
     require_write(model)
     if len(pks) > conf.get("MAX_PKS"):
-        raise ToolError(f"too many pks: {len(pks)} > MAX_PKS={conf.get('MAX_PKS')}")
+        raise ToolRefusalError(f"too many pks: {len(pks)} > MAX_PKS={conf.get('MAX_PKS')}")
     _, model_admin, request = resolve(user, model, "change")
 
     available = model_admin.get_actions(request)
@@ -44,7 +44,9 @@ def run_action(model: str, action: str, pks: list[str], confirm: bool = False) -
     queryset = model_admin.get_queryset(request).filter(pk__in=pks)
     found = queryset.count()
     if found != len(set(pks)):
-        raise ToolError(f"only {found} of {len(set(pks))} selected objects are visible to you")
+        raise ToolRefusalError(
+            f"only {found} of {len(set(pks))} selected objects are visible to you"
+        )
 
     if not confirm:
         return {

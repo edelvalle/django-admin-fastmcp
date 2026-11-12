@@ -11,7 +11,7 @@ from django.core.exceptions import FieldDoesNotExist
 
 from django_admin_fastmcp import exposure
 from django_admin_fastmcp.auth import current_user
-from django_admin_fastmcp.errors import ToolError
+from django_admin_fastmcp.errors import ToolRefusalError
 from django_admin_fastmcp.tools import resolve
 
 RESULT_CAP = 20
@@ -31,9 +31,9 @@ def autocomplete(model: str, field: str, q: str) -> list[dict[str, Any]]:
     try:
         model_field = model_class._meta.get_field(field)
     except FieldDoesNotExist:
-        raise ToolError(f"unknown field {field!r} on {model}") from None
+        raise ToolRefusalError(f"unknown field {field!r} on {model}") from None
     if not model_field.is_relation or model_field.related_model is None:
-        raise ToolError(f"field {field!r} on {model} is not a relation")
+        raise ToolRefusalError(f"field {field!r} on {model} is not a relation")
 
     related_label = exposure.label_of(model_field.related_model)
     _related_class, related_admin, related_request = resolve(user, related_label, "view")
