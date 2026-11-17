@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The description of `admin_run_code` says which modules the sandbox has, and that its `asyncio` has only `gather`, `sleep` and `run`.  It also says the server queues calls past `CODEMODE_MAX_PARALLEL`, so a snippet need not throttle them.  Agents read that limit as theirs to enforce and reached for `asyncio.Semaphore`, which the sandbox lacks, so the snippet failed its type check.
+- The function stubs in that description carry each tool's whole docstring, not its first line, so the agent sees the argument formats and the shape of each answer.  First lines that ran on into a second line no longer stop mid-sentence.
+
 ## [0.3.1] - 2026-11-17
 
 ### Fixed

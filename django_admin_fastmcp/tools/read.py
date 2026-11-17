@@ -42,7 +42,8 @@ def search_objects(
     to values, for example {"published": true} or {"author__name": "Ada"}.
     An unknown field or lookup is an error, never a silent no-op. `order_by`
     is a list of field names, prefix "-" for descending. `page_size` is
-    capped by the server. Returns {"rows": [...], "total": n, "page": n}.
+    capped by the server. Returns {"rows": [...], "total": n, "page": n,
+    "page_size": n}, where `page_size` is the size actually served.
     Rows you may not see, per the admin's own queryset, are absent.
     """
     user = current_user()
