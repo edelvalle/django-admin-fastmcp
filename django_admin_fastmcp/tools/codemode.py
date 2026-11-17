@@ -92,7 +92,7 @@ class SandboxTool:
     signature: inspect.Signature
     hints: dict[str, Any]
     adapters: dict[str, TypeAdapter]
-    summary: str
+    doc: str
 
     def call(self, args: tuple, kwargs: dict[str, Any]) -> Any:
         """Validate the arguments the way a direct call does, then run the tool.
@@ -145,9 +145,9 @@ def _describe_tool(name: str, fn: Callable) -> SandboxTool:
     adapters = {
         parameter: TypeAdapter(hint) for parameter, hint in hints.items() if parameter != "return"
     }
-    summary = (inspect.getdoc(tool_function) or "").strip().split("\n")[0]
+    doc = (inspect.getdoc(tool_function) or "").strip()
     return SandboxTool(
-        name=name, fn=fn, signature=signature, hints=hints, adapters=adapters, summary=summary
+        name=name, fn=fn, signature=signature, hints=hints, adapters=adapters, doc=doc
     )
 
 
@@ -180,8 +180,19 @@ def _render_stub(tool: SandboxTool, imports: set[str]) -> str:
     returned = (
         _render_type(tool.hints["return"], imports) if "return" in tool.hints else "dict[str, Any]"
     )
-    docstring = f'\n    """{tool.summary}"""' if tool.summary else " ..."
+    # The whole docstring, not its first line: the argument formats and the shape of the
+    # answer are in the body, and the agent has no other way to learn them inside a snippet.
+    docstring = f'\n    """{_indent_doc(tool.doc)}"""' if tool.doc else " ..."
     return f"async def {tool.name}({', '.join(parameters)}) -> {returned}:{docstring}"
+
+
+def _indent_doc(doc: str) -> str:
+    lines = doc.replace('"""', "'''").splitlines()
+    if len(lines) == 1:
+        return lines[0]
+    else:
+        body = "\n".join(f"    {line}" if line else "" for line in lines[1:])
+        return f"{lines[0]}\n{body}\n    "
 
 
 def _render_parameter(parameter: inspect.Parameter, hint: Any, imports: set[str]) -> str:
@@ -226,18 +237,27 @@ Use it instead of many direct calls when the results of several tool calls must 
 in a deterministic way: loop over search results, join, filter, count.
 
 Rules:
-- The snippet is Python, run by a sandboxed interpreter.  Each function below is async: call \
-it with `await`, by keyword, and run calls in parallel with `asyncio.gather`.
+- The snippet is Python, run by a sandboxed interpreter, not CPython.  Each function below is \
+async: call it with `await` at the top level or inside an `async def`, passing arguments by \
+keyword.
+- Run calls in parallel with `asyncio.gather(*[...])`.  Gather as many calls as you need: the \
+server runs {conf.get("CODEMODE_MAX_PARALLEL")} at a time and queues the rest, so don't \
+throttle them yourself.  The sandbox's `asyncio` has only `gather`, `sleep` and `run`.  \
+There is no `Semaphore`, `Lock`, `Queue`, `create_task`, `TaskGroup`, `wait` or `wait_for`.
 - The value of the last expression is the result.  `print` output comes back as `stdout`.
-- Only part of the standard library imports (asyncio, json, re, datetime, math, itertools, \
-collections, ...).  There are no other modules, no files, no network and no environment.
-- The snippet is type-checked against the functions below before it runs.
+- Importable modules: asyncio (see above), base64, bisect, collections, dataclasses, \
+datetime, functools, itertools, json, math, random, re, typing, unicodedata.  There are no \
+other modules, no files, no network and no environment.  `dir` is not available.
+- The snippet is type-checked against the functions below before it runs.  A name the \
+sandbox lacks fails this check, and the snippet does not run.
 - A refused call raises an exception, which the snippet may catch.
 - Each call reads the database at its own moment, not from one snapshot.
+- `search_objects` serves at most {conf.get("MAX_PAGE_SIZE")} rows per page, whatever \
+`page_size` asks for; its answer's `page_size` is the size served.  To count rows, read its \
+`total`; page through rows only when you need their fields.
 - Limits per run: {conf.get("CODEMODE_TIMEOUT")} seconds, {conf.get("CODEMODE_MAX_CALLS")} \
-calls, {conf.get("CODEMODE_MAX_PARALLEL")} calls at the same time, and \
-{conf.get("CODEMODE_MAX_RESULT_BYTES")} bytes of result and stdout.  A larger result is \
-refused: reduce it in the snippet.
+calls, and {conf.get("CODEMODE_MAX_RESULT_BYTES")} bytes of result and stdout.  A larger \
+result is refused: reduce it in the snippet.
 
 Functions:
 
