@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Security
+
+- The snippet that `admin_run_code` records has its dict keys redacted too, since a key can be data as much as a value, and keeps a `model=` value only when it names an installed model.  The run's span and audit record also list the tools the snippet called (`mcp_tools`).
+- The Logfire span of a tool call keeps the type of the exception that ended it (`mcp.error_type`), not its message nor its traceback, which quote the caller's data (a pk, a filter value, the traceback of a snippet, which quotes its lines as written).
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
