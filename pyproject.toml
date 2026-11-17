@@ -51,6 +51,7 @@ dependencies = [
 [project.optional-dependencies]
 sentry = ["sentry-sdk>=2.62"]
 logfire = ["logfire>=3.8"]
+codemode = ["pydantic-monty>=1.6.0"]
 
 [project.urls]
 Homepage = "https://github.com/edelvalle/django-admin-fastmcp"
@@ -66,13 +67,13 @@ test = [
 ]
 typing = [
     # zuban reads the standard [tool.mypy] configuration below.
-    "zuban>=0.9",
+    "zuban==0.9.1",
 ]
 lint = [
-    "ruff",
+    "ruff==0.17.*",
 ]
 devtools = [
-    "uvicorn[standard]",
+    "uvicorn[standard]==0.54.*",
 ]
 observability = [
     # The optional extras, installed in dev so tests exercise the real
@@ -80,12 +81,17 @@ observability = [
     "sentry-sdk>=2.62",
     "logfire>=3.8",
 ]
+codemode = [
+    # The codemode extra, installed in dev so tests run real snippets.
+    "pydantic-monty>=1.6.0",
+]
 dev = [
     { include-group = "test" },
     { include-group = "typing" },
     { include-group = "lint" },
     { include-group = "devtools" },
     { include-group = "observability" },
+    { include-group = "codemode" },
 ]
 
 [tool.hatch.version]

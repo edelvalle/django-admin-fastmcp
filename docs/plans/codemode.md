@@ -11,7 +11,7 @@ This gives two gains:
 
 The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox, in the async path of the ASGI app.  Inside the sandbox, each tool is an async function.
 
-The package provides code mode on its own: an optional extra and a `CODEMODE` setting.  A consumer installs the extra and turns the setting on.  The consumer writes no code.
+The package provides code mode on its own: an optional extra and the `CODEMODE_*` keys of `ADMIN_FASTMCP`.  A consumer installs the extra and turns the setting on.  The consumer writes no code.
 
 This document describes the design and its decisions.  Decisions 1 and 4 are made; the others are open.
 
@@ -47,10 +47,10 @@ MCP client ──▶ MCP_URL (admin_mcp_serve, or a mounted app)
 ### Packaging and settings
 
 - A new extra, `codemode = ["pydantic-monty>=…"]`, next to `sentry` and `logfire`.
-- A new key in `conf.DEFAULTS`, `CODEMODE`, with the limits of decision 6.
-- `build_server()` registers `run_code` only when `pydantic_monty` is importable and `CODEMODE` turns it on.  This is the same rule as the tracing backends.
+- New flat keys in `conf.DEFAULTS`, with the prefix `CODEMODE_` (decision 6).  Flat keys keep their defaults one by one, because `conf.get()` replaces a value as a whole, and the startup check of unknown keys covers them without change.
+- `build_server()` registers `run_code` only when `pydantic_monty` is importable and `CODEMODE_ENABLED` is on.  This is the same rule as the tracing backends.
 - `run_code` is a name in `all_tools()`, so `DISABLED_TOOLS` can remove it and `checks.py` accepts the name.
-- `checks.py` reports an error when `CODEMODE` turns the tool on but the extra is not installed.
+- `checks.py` reports an error when `CODEMODE_ENABLED` is on but the extra is not installed.
 
 ### What the agent sees
 
@@ -89,16 +89,16 @@ The result contains the value of the last expression and the captured `print` ou
 # django_admin_fastmcp/tools/codemode.py
 async def run_code(code: str) -> dict[str, Any]:
     """<generated: the rules, the limits, and the stubs>"""
-    settings = conf.get("CODEMODE")
     tools = sandbox_tools()                 # name -> validate_call(instrument(...))
-    limiter = anyio.CapacityLimiter(settings["MAX_PARALLEL"])
+    max_calls = conf.get("CODEMODE_MAX_CALLS")
+    limiter = anyio.CapacityLimiter(conf.get("CODEMODE_MAX_PARALLEL"))
     calls = itertools.count(1)
     printed: list[str] = []
 
     def bridge(fn):
         async def call(*args, **kwargs):
-            if next(calls) > settings["MAX_CALLS"]:
-                raise ToolRefusalError(f"over MAX_CALLS={settings['MAX_CALLS']}")
+            if next(calls) > max_calls:
+                raise ToolRefusalError(f"over CODEMODE_MAX_CALLS={max_calls}")
             return await anyio.to_thread.run_sync(
                 functools.partial(with_fresh_connections(fn), *args, **kwargs), limiter=limiter
             )
@@ -111,7 +111,7 @@ async def run_code(code: str) -> dict[str, Any]:
     output = await pydantic_monty.run_monty_async(
         snippet,
         external_functions={name: bridge(fn) for name, fn in tools.items()},
-        limits=pydantic_monty.ResourceLimits(max_duration_secs=settings["TIMEOUT"], ...),
+        limits=pydantic_monty.ResourceLimits(max_duration_secs=conf.get("CODEMODE_TIMEOUT"), ...),
         print_callback=lambda _stream, text: printed.append(text),
     )
     return bounded({"result": output, "stdout": "".join(printed)})
@@ -155,7 +155,7 @@ Decision D8 of SPEC.md (a cap on superuser tokens) is still open, and it affects
 
 ### 4. How the bridge calls the tools — decided: A
 
-- **A. A worker thread for each call** (`anyio.to_thread.run_sync`, as in the sketch).  The tools stay sync and do not change.  `MAX_PARALLEL` limits the threads and the database connections.
+- **A. A worker thread for each call** (`anyio.to_thread.run_sync`, as in the sketch).  The tools stay sync and do not change.  `CODEMODE_MAX_PARALLEL` limits the threads and the database connections.
 - **B. Native async tools.**  The tools become `async def` with the async ORM.  The bridge then awaits them directly.  This contradicts decision D6: the admin API is sync only.
 - **C. Run the whole snippet in one worker thread**, with a sync bridge.  The inner calls then run one after the other, and `asyncio.gather` gives no parallel calls.
 
@@ -166,13 +166,12 @@ The current decision is A.  The tools are sync, and A needs no change to them.  
 - **A. Each inner call is its own unit**, as today.  The snippet can read data from different points in time.
 - **B. One transaction for the whole run** (for example `REPEATABLE READ`, read only).  The snippet then reads one consistent snapshot.  With the worker threads of decision 4, all inner calls must then share one connection, so the calls run one after the other.
 
-### 6. The `CODEMODE` setting and its defaults
+### 6. The `CODEMODE_*` settings and their defaults
 
-The keys are `ENABLED`, `TIMEOUT`, `MAX_CALLS`, `MAX_PARALLEL` and `MAX_RESULT_BYTES`, plus the Monty limits (memory, allocations, recursion depth).  Open points:
+The keys are flat keys of `ADMIN_FASTMCP`, like the existing ones: `CODEMODE_ENABLED`, `CODEMODE_TIMEOUT`, `CODEMODE_MAX_CALLS`, `CODEMODE_MAX_PARALLEL` and `CODEMODE_MAX_RESULT_BYTES`, plus the Monty limits (memory, allocations, recursion depth).  Open points:
 
 - Is code mode on or off by default when the extra is installed?
-- The default values.  With worker threads (decision 4), each parallel call holds one database connection.  The default `MAX_PARALLEL` must be safe for a small connection pool, and a consumer raises it.
-- One dict key (`CODEMODE = {...}`) or flat keys (`CODEMODE_TIMEOUT`, …).  The current keys of `ADMIN_FASTMCP` are flat.
+- The default values.  With worker threads (decision 4), each parallel call holds one database connection.  The default `CODEMODE_MAX_PARALLEL` must be safe for a small connection pool, and a consumer raises it.
 
 ### 7. A result that is too large
 
@@ -187,7 +186,7 @@ The keys are `ENABLED`, `TIMEOUT`, `MAX_CALLS`, `MAX_PARALLEL` and `MAX_RESULT_B
 ## Steps (after the decisions)
 
 1. Add the `codemode` extra, and confirm the API of `pydantic-monty` and its supported Python subset (`async`/`await`, `asyncio.gather`, comprehensions, `dict` and `list` methods).
-2. Add `CODEMODE` to `conf.DEFAULTS` and its validation to `checks.py`.
+2. Add the `CODEMODE_*` keys to `conf.DEFAULTS` and its validation to `checks.py`.
 3. Write the stub generator from `all_tools()` and `declared()`.
 4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.
 5. Verify that `current_user()` returns the token's user inside the inner calls.

@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Code mode, in the new `codemode` extra (`django-admin-fastmcp[codemode]`).  A new tool, `admin_run_code`, runs a short Python snippet in a [pydantic-monty](https://github.com/pydantic/monty) sandbox.  The snippet calls the admin tools as async functions, and only its final value goes back to the agent.  A search followed by one call per result becomes a single tool call, and the intermediate results stay on the server.  Each call from the snippet passes the same permission checks and writes the same spans and audit records as a direct call.  The server registers the tool only when the extra is installed and the `CODEMODE_ENABLED` setting turns it on.  See [CODEMODE.md](CODEMODE.md).
+
 ## [0.2.3] - 2026-11-12
 
 ### Fixed
