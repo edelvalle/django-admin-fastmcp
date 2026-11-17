@@ -105,4 +105,22 @@ The keys live in the `ADMIN_FASTMCP` dict, next to the other settings, with the 
 
 A run opens one span, `admin_run_code`, and the spans of the tool calls it makes nest under it.  The audit log keeps one record for each tool call, as for direct calls, and one record for the run with the number of calls.
 
-**Open:** whether the span and the audit record keep the snippet itself (with the usual redaction) or only a hash of it.  A snippet can contain search terms and personal data.
+The span and the audit record of the run keep the snippet with its data redacted, plus a hash of the original snippet to group the runs of the same one.  A snippet can contain search terms and personal data, so before it records the snippet the server:
+
+- replaces every string literal with `"[redacted]"`, except dict keys (field names and lookups such as `"status__in"`) and the value of `model=`;
+- drops the comments.
+
+Numbers, booleans and `None` stay.  A snippet that is not valid Python is recorded by its hash only.
+
+For example, this snippet:
+
+```python
+# customers that wrote from Maria's address
+await search_objects(model="crm.customer", q="maria.garcia@example.com", filters={"status": "active"})
+```
+
+is recorded as:
+
+```python
+await search_objects(model='crm.customer', q='[redacted]', filters={'status': '[redacted]'})
+```

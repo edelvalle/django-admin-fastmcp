@@ -13,7 +13,7 @@ The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbo
 
 The package provides code mode on its own: an optional extra and the `CODEMODE_*` keys of `ADMIN_FASTMCP`.  A consumer installs the extra and turns the setting on.  The consumer writes no code.
 
-This document describes the design and its decisions.  Decisions 1 and 4 are made; the others are open.
+This document describes the design and its decisions.  Decisions 1, 4 and 8 are made; the others are open.
 
 ## Current state
 
@@ -127,7 +127,7 @@ The bridge uses a worker thread for each call (decision 4, option A).
 - **Argument validation.**  Monty gives raw values to the external functions, and FastMCP does not validate them.  Each callable in the sandbox needs `pydantic.validate_call` (or the input schema of FastMCP) to coerce and refuse arguments the same way as a direct call.
 - **Early failure.**  Monty can type-check the snippet against the stubs before it runs.  A wrong name or a wrong argument type then fails before the first tool call.
 - **Errors in the snippet.**  A `ToolRefusalError` from a tool goes into the sandbox as an exception.  The snippet can catch it.  An exception that the snippet does not catch stops the run, and the tool result shows the message and the line of the snippet.
-- **Tracing and audit.**  `instrument("run_code", ...)` opens one span for the run, and it holds the spans that `instrument()` opens for the inner calls.  The audit log keeps one record for each inner call, and one record for the run.  The run records the count of calls.
+- **Tracing and audit.**  `instrument("run_code", ...)` opens one span for the run, and it holds the spans that `instrument()` opens for the inner calls.  The audit log keeps one record for each inner call, and one record for the run.  The run records the count of calls, and the redacted snippet of decision 8.
 - **User identity in the inner calls.**  `current_user()` reads a context variable.  The bridge must carry the context into each inner call.  `anyio.to_thread.run_sync` copies the context into the thread; verify this with the access-token variable of FastMCP before anything else.
 - **Decision D6 holds for the tools.**  The admin tools stay sync.  Only `run_code` is async, because it runs no admin code itself.
 
@@ -178,10 +178,20 @@ The keys are flat keys of `ADMIN_FASTMCP`, like the existing ones: `CODEMODE_ENA
 - **A. Refuse it** with an error that tells the agent to reduce the result in the snippet.
 - **B. Truncate it** and add a marker that tells the agent.
 
-### 8. What the span and the audit log record
+### 8. What the span and the audit log record — decided: B
 
 - **A. A hash of the snippet only.**  The snippet can contain search terms and personal data.
-- **B. The full snippet**, with the same redaction that applies to the arguments of direct calls.  This makes it easier to debug, and it shows which tool combinations agents use.
+- **B. The full snippet, with redactions.**  This makes it easier to debug, and it shows which tool combinations agents use.
+
+The current decision is B.  Direct calls record no arguments today: `instrument()` keeps the tool, the model, the user, the client, the outcome and the duration.  `REDACT_FIELDS` hides result values by field name, so it cannot apply to free-form code.  Code mode therefore brings its own redaction, which keeps the structure of the snippet and drops its data:
+
+- The server parses the snippet with `ast` and replaces each string and bytes literal, the constant parts of f-strings included, with `"[redacted]"`.  Search terms, primary keys and filter values are strings, so they go.
+- Two kinds of strings stay, because they name the schema and not the data: dict keys (field names and lookups such as `"status__in"`), and the value of a `model=` argument (the span of each inner call records the model anyway).
+- Numbers, booleans and `None` stay.  They are mostly page sizes and limits.  A numeric primary key also stays; the tools take primary keys as strings, so a snippet rarely writes one as a number.
+- The server records `ast.unparse()` of the result, so comments, which can hold anything, go too.
+- The record also keeps a hash of the original snippet, to group the runs of the same snippet.  A snippet that does not parse keeps only its hash.
+
+The redacted snippet goes into an attribute of the run's span and into the `extra` of its audit record.
 
 ## Steps (after the decisions)
 
@@ -190,5 +200,5 @@ The keys are flat keys of `ADMIN_FASTMCP`, like the existing ones: `CODEMODE_ENA
 3. Write the stub generator from `all_tools()` and `declared()`.
 4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.
 5. Verify that `current_user()` returns the token's user inside the inner calls.
-6. Nest the inner spans under the span of the run.
+6. Nest the inner spans under the span of the run, and record the redacted snippet and its hash (decision 8).
 7. Update SPEC.md (sections 3, 4, 9 and 14) and the README.
