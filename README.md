@@ -163,6 +163,12 @@ All keys live in the `ADMIN_FASTMCP` dict. An unknown key is an error at startup
 | `ENABLE_LOGFIRE_TRACING` | `True` | Logfire spans and metrics, when `logfire` is installed and configured. |
 | `SITE_URL` | `"http://127.0.0.1:8000"` | Public URL of the Django site. It is the OAuth issuer, and the MCP server names it as its authorization server. |
 | `MCP_URL` | `"http://127.0.0.1:8765/admin/mcp"` | Public URL of the MCP endpoint. |
+| `CODEMODE_ENABLED` | `False` | Registers `admin_run_code`, with the `codemode` extra. See [Code mode](#code-mode). |
+| `CODEMODE_TIMEOUT` | `30` | Seconds a code mode run may take, tool calls included. |
+| `CODEMODE_MAX_CALLS` | `100` | Tool calls a code mode run may make. |
+| `CODEMODE_MAX_PARALLEL` | `4` | Tool calls of one run at the same time.  Each holds a database connection. |
+| `CODEMODE_MAX_RESULT_BYTES` | `65536` | Maximum size of a run's result and `print` output.  A larger one is refused. |
+| `CODEMODE_MAX_MEMORY_BYTES` | `67108864` | Heap memory of the code mode sandbox. |
 
 Set `SITE_URL` and `MCP_URL` for any real deployment. `MCP_URL` is the single
 source of three things that must agree: the path the endpoint is served on, the
@@ -233,6 +239,16 @@ class InvoiceAdmin(admin.ModelAdmin):
 
 `REDACT_FIELDS` wins over `mcp_fields`. Listing a password field explicitly does not
 reveal it.
+
+## Code mode
+
+With the `codemode` extra and `CODEMODE_ENABLED`, one more tool, `admin_run_code`, runs a short Python snippet that calls the read tools and combines their results; only the final value goes back to the agent.  A search followed by one call per result becomes a single tool call.
+
+```bash
+uv add "django-admin-fastmcp[codemode]"
+```
+
+The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox, with no imports beyond part of the standard library, no files, no network and no environment.  Each call from the snippet goes through the same permission checks, spans and audit records as a direct call.  Write tools are not available in the sandbox.  [CODEMODE.md](CODEMODE.md) covers the details.
 
 ## Safety
 

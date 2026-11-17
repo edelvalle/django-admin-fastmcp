@@ -27,7 +27,14 @@ ifdef _LOAD_ENVRC
 endif
 
 UV ?= uv
-RUN ?= $(UV) run
+# Empty means the Django version pinned in uv.lock.  A `major.minor` value (e.g. 5.1) runs the
+# commands against the latest patch release of that series instead, without touching the lock.
+DJANGO_VERSION ?=
+ifdef DJANGO_VERSION
+    RUN ?= $(UV) run --with "django~=$(DJANGO_VERSION).0"
+else
+    RUN ?= $(UV) run
+endif
 
 help: ## Show this help message
 	@echo "django-admin-fastmcp development commands:"
@@ -49,10 +56,10 @@ upgrade update: bootstrap ## Upgrade every dependency and refresh the lock file
 	@$(UV) sync -U
 
 test: ## Run the test suite (the permission matrix)
-	@$(RUN) pytest
+	@$(RUN) python -m pytest
 
 coverage: ## Run the tests with coverage
-	@$(RUN) pytest --cov --cov-report=term
+	@$(RUN) python -m pytest --cov --cov-report=term
 
 lint: ## Check code style without changing files
 	@$(RUN) ruff check $(PROJECT_NAME)/ tests/

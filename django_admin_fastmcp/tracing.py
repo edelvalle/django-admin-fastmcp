@@ -17,11 +17,15 @@ What reaches Sentry per tool call:
 """
 
 import contextlib
+import contextvars
 import functools
+import inspect
 import logging
 import time
 from collections.abc import Callable
 from typing import Any
+
+import anyio
 
 from django_admin_fastmcp import conf
 from django_admin_fastmcp.errors import ToolError
@@ -84,8 +88,21 @@ def _logfire_span(name: str, tags: dict[str, str]):
 
 @contextlib.contextmanager
 def tracing_span(name: str, **tags: str):
-    with _sentry_span(name, tags), _logfire_span(name, tags):
-        yield
+    """Open the Sentry and Logfire spans of `name`, when their backends are on.
+
+    Yields a function `set_attribute(key, value)` that sets an attribute on every open span,
+    and does nothing when no backend is on.
+
+    """
+    with _sentry_span(name, tags) as sentry_span, _logfire_span(name, tags) as logfire_span:
+
+        def set_attribute(key: str, value: Any) -> None:
+            if sentry_span is not None:
+                sentry_span.set_data(key, value)
+            if logfire_span is not None:
+                logfire_span.set_attribute(key, value)
+
+        yield set_attribute
 
 
 # -- metrics -----------------------------------------------------------------
@@ -151,61 +168,115 @@ def _sentry_user_scope(user_id: str, username: str, tags: dict[str, str]):
         yield
 
 
+# The fields `annotate()` adds to the current tool call.  A context variable, so that a tool
+# calling other tools (admin_run_code) annotates its own call: each inner call sets its own
+# dict, in the copy of the context its worker thread runs in.
+_fields: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "django_admin_fastmcp_fields", default=None
+)
+
+
+def annotate(**fields: Any) -> None:
+    """Add `fields` to the span and the audit log record of the current tool call.
+
+    Each field becomes the span attribute `mcp.<name>` and the log record attribute
+    `mcp_<name>`.  A later call with the same name replaces the value.  Outside an
+    instrumented tool call it does nothing.
+
+    """
+    current = _fields.get()
+    if current is not None:
+        current.update(fields)
+
+
+@contextlib.contextmanager
+def _instrumented_call(wire_name: str, tool_name: str, model_label: str, identity):
+    user_id, username, client = identity
+    tags = {"mcp.tool": wire_name, "mcp.client": client}
+    if model_label:
+        tags["mcp.model"] = model_label
+
+    fields: dict[str, Any] = {}
+    fields_token = _fields.set(fields)
+    outcome = "ok"
+    started = time.perf_counter()
+    try:
+        with (
+            _sentry_user_scope(user_id, username, tags),
+            tracing_span(wire_name, **tags) as set_attribute,
+        ):
+            try:
+                yield
+            except ToolError:
+                outcome = "denied"
+                raise
+            except Exception as error:
+                outcome = "error"
+                if _sentry_on():
+                    sentry_sdk.capture_exception(error)
+                raise
+            finally:
+                for key, value in fields.items():
+                    set_attribute(f"mcp.{key}", value)
+    finally:
+        _fields.reset(fields_token)
+        duration_ms = (time.perf_counter() - started) * 1000
+        metric_incr(f"damf.{tool_name}.{outcome}")
+        metric_distribution(f"damf.{tool_name}.duration_ms", duration_ms)
+        logger.log(
+            logging.INFO if outcome == "ok" else logging.WARNING,
+            "tool=%s model=%s user=%s client=%s outcome=%s duration_ms=%.1f",
+            wire_name,
+            model_label or "-",
+            username,
+            client,
+            outcome,
+            duration_ms,
+            extra={
+                "mcp_tool": wire_name,
+                "mcp_model": model_label,
+                "mcp_user_id": user_id,
+                "mcp_user": username,
+                "mcp_client": client,
+                "mcp_outcome": outcome,
+                "mcp_duration_ms": duration_ms,
+                **{f"mcp_{key}": value for key, value in fields.items()},
+            },
+        )
+
+
+def _caller_identity_in_thread() -> tuple[str, str, str]:
+    from django_admin_fastmcp.auth import with_fresh_connections
+
+    return with_fresh_connections(_caller_identity)()
+
+
 def instrument(tool_name: str, fn: Callable, *, model: str | None = None) -> Callable:
     """Wrap one tool function with spans, metrics, and the audit log record.
 
     A generic tool names its model in the `model` argument of each call; a declared tool
-    acts on one model, given here.
+    acts on one model, given here.  `fn` may be sync or async; an async `fn` gets an
+    async wrapper, which looks up the caller in a worker thread, because the ORM is not
+    allowed on the event loop.
+
     """
     wire_name = f"admin_{tool_name}"
 
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args, **kwargs):
+            model_label = model if model is not None else str(kwargs.get("model", ""))
+            identity = await anyio.to_thread.run_sync(_caller_identity_in_thread)
+            with _instrumented_call(wire_name, tool_name, model_label, identity):
+                return await fn(*args, **kwargs)
+
+        return async_wrapper
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        user_id, username, client = _caller_identity()
         model_label = model if model is not None else str(kwargs.get("model", ""))
-        tags = {"mcp.tool": wire_name, "mcp.client": client}
-        if model_label:
-            tags["mcp.model"] = model_label
-
-        outcome = "ok"
-        started = time.perf_counter()
-        try:
-            with (
-                _sentry_user_scope(user_id, username, tags),
-                tracing_span(wire_name, **tags),
-            ):
-                try:
-                    return fn(*args, **kwargs)
-                except ToolError:
-                    outcome = "denied"
-                    raise
-                except Exception as error:
-                    outcome = "error"
-                    if _sentry_on():
-                        sentry_sdk.capture_exception(error)
-                    raise
-        finally:
-            duration_ms = (time.perf_counter() - started) * 1000
-            metric_incr(f"damf.{tool_name}.{outcome}")
-            metric_distribution(f"damf.{tool_name}.duration_ms", duration_ms)
-            logger.log(
-                logging.INFO if outcome == "ok" else logging.WARNING,
-                "tool=%s model=%s user=%s client=%s outcome=%s duration_ms=%.1f",
-                wire_name,
-                model_label or "-",
-                username,
-                client,
-                outcome,
-                duration_ms,
-                extra={
-                    "mcp_tool": wire_name,
-                    "mcp_model": model_label,
-                    "mcp_user_id": user_id,
-                    "mcp_user": username,
-                    "mcp_client": client,
-                    "mcp_outcome": outcome,
-                    "mcp_duration_ms": duration_ms,
-                },
-            )
+        with _instrumented_call(wire_name, tool_name, model_label, _caller_identity()):
+            return fn(*args, **kwargs)
 
     return wrapper

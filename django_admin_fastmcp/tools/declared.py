@@ -176,6 +176,9 @@ def _bind(label: str, method: Callable, meta: ToolMeta) -> Callable:
     wrapper: Any = tool
     wrapper.__name__ = wrapper.__qualname__ = meta.name
     wrapper.__doc__ = meta.description
+    # The wrappers around this function copy its `__dict__`, so code mode can tell a read
+    # tool from a write tool on the function it registered.
+    setattr(wrapper, ATTRIBUTE, meta)
     wrapper.__signature__ = signature.replace(
         parameters=parameters, return_annotation=inspect.Signature.empty
     )
