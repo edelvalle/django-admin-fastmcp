@@ -694,7 +694,7 @@ typing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "django", specifier = ">=5.0" },
+    { name = "django", specifier = ">=5.2" },
     { name = "fastmcp", specifier = ">=3.4,<4" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.8" },
     { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.6.0" },

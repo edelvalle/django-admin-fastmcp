@@ -56,10 +56,10 @@ upgrade update: bootstrap ## Upgrade every dependency and refresh the lock file
 	@$(UV) sync -U
 
 test: ## Run the test suite (the permission matrix)
-	@$(RUN) pytest
+	@$(RUN) python -m pytest
 
 coverage: ## Run the tests with coverage
-	@$(RUN) pytest --cov --cov-report=term
+	@$(RUN) python -m pytest --cov --cov-report=term
 
 lint: ## Check code style without changing files
 	@$(RUN) ruff check $(PROJECT_NAME)/ tests/

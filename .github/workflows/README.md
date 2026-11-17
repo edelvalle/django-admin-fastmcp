@@ -12,7 +12,7 @@ This directory contains GitHub Actions workflows for automated code quality chec
 
 - **Lint & Format Check**: Verifies code formatting and linting rules using `make lint`
 - **Type Check**: Runs type checking with `make typecheck` (zuban)
-- **Tests**: Runs the test suite using `make test`, for every Django series that `pyproject.toml` supports (5.0 to 6.1), each on the oldest and the newest Python that both `pyproject.toml` and that Django series support.  The newest combination (Django 6.1 on Python 3.14) runs `make coverage` instead, to report coverage
+- **Tests**: Runs the test suite using `make test`, for every Django series that `pyproject.toml` supports (5.2 to 6.1), each on the oldest and the newest Python that both `pyproject.toml` and that Django series support.  The newest combination (Django 6.1 on Python 3.14) runs `make coverage` instead, to report coverage
 
 **Requirements**: Tests will only run if linting passes.
 

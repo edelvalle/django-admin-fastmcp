@@ -20,21 +20,13 @@ from django_admin_fastmcp.tools.read import _get_visible
 
 def _log(request, obj, action_flag: int, change_message: str) -> None:
     """One LogEntry per mutation, attributed to the grant's user."""
-    if hasattr(LogEntry.objects, "log_actions"):
-        LogEntry.objects.log_actions(
-            request.user.pk, [obj], action_flag, change_message, single_object=True
-        )
-    else:  # Django 5.0
-        from django.contrib.contenttypes.models import ContentType
-
-        LogEntry.objects.log_action(
-            user_id=request.user.pk,
-            content_type_id=ContentType.objects.get_for_model(type(obj)).pk,
-            object_id=obj.pk,
-            object_repr=str(obj),
-            action_flag=action_flag,
-            change_message=change_message,
-        )
+    LogEntry.objects.log_actions(
+        request.user.pk,
+        [obj],
+        action_flag,
+        change_message,
+        single_object=True,
+    )
 
 
 def _via_mcp(text: str) -> str:

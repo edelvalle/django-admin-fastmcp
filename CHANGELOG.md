@@ -11,6 +11,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Code mode, in the new `codemode` extra (`django-admin-fastmcp[codemode]`).  A new tool, `admin_run_code`, runs a short Python snippet in a [pydantic-monty](https://github.com/pydantic/monty) sandbox.  The snippet calls the admin tools as async functions, and only its final value goes back to the agent.  A search followed by one call per result becomes a single tool call, and the intermediate results stay on the server.  Each call from the snippet passes the same permission checks and writes the same spans and audit records as a direct call.  Only the read tools are available in the sandbox; the write tools stay direct calls.  The tool is off by default: the server registers it when the extra is installed and `CODEMODE_ENABLED` is on, and the server instructions then tell agents to prefer it for every read that takes more than one tool call, and that it is read-only.  `CODEMODE_TIMEOUT`, `CODEMODE_MAX_CALLS`, `CODEMODE_MAX_PARALLEL`, `CODEMODE_MAX_RESULT_BYTES` and `CODEMODE_MAX_MEMORY_BYTES` bound each run.  The run's span and audit record keep the snippet with its string literals redacted.  System check `E008` reports `CODEMODE_ENABLED` without the extra.  See [CODEMODE.md](CODEMODE.md).
 - `instrument()` accepts async tool functions, and `tracing.annotate()` adds fields to the span and the audit record of the current tool call.
+- Django 6.1 support.
+
+### Removed
+
+- Support for Django 5.0 and 5.1, which reached their end of life in April 2025 and December 2025.  The package now requires Django 5.2 or later.
 
 ## [0.2.3] - 2026-11-12
 

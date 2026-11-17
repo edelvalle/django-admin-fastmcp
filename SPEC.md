@@ -147,13 +147,11 @@ description = "Expose the Django admin as an MCP server, gated by each user's ow
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
-  "django>=5.0",
+  "django>=5.2",
   "fastmcp>=3.4,<4",
 ]
 classifiers = [
   "Framework :: Django",
-  "Framework :: Django :: 5.0",
-  "Framework :: Django :: 5.1",
   "Framework :: Django :: 5.2",
   "Framework :: Django :: 6.0",
 ]
@@ -181,7 +179,7 @@ line-length = 100
 target-version = "py311"
 ```
 
-Test matrix in CI: Python 3.11 to 3.14, Django 5.0 to 6.0, minus the unsupported pairs.
+Test matrix in CI: every supported Django series (5.2 to 6.1), each on the oldest and the newest Python that both the package and that series support.
 
 ### 2.6 Consumer setup, the target experience
 
