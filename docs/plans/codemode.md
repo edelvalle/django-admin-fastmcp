@@ -54,9 +54,9 @@ MCP client ──▶ MCP_URL (admin_mcp_serve, or a mounted app)
 
 ### What the agent sees
 
-The server instructions, which a client receives when it connects and usually shows to the model before it loads any tool, gain one sentence when `CODEMODE_ENABLED` is on.  `build_server()` appends it to the text it passes to `FastMCP(instructions=...)`:
+The server instructions, which a client receives when it connects and usually shows to the model before it loads any tool, gain a paragraph when `CODEMODE_ENABLED` is on.  `build_server()` puts it between the orientation and the preview rule of the destructive tools, in the text it passes to `FastMCP(instructions=...)`.  It is a strong suggestion, not a mention, and it says that code mode is read-only:
 
-> To combine the results of many tool calls in a deterministic way (loop over search results, join, filter, count), write a Python snippet and send it in one `admin_run_code` call instead of calling each tool directly.  Only the snippet's final value comes back.
+> Prefer admin_run_code for every read that takes more than one tool call: a search followed by a call per result, combining several models, filtering, grouping or counting rows, or checking many objects. Write one Python snippet that awaits the read tools and computes the answer, and send it in a single admin_run_code call. It is faster than calling the tools one by one, the computation is deterministic, and the intermediate results stay out of your context: only the snippet's final value comes back. Call the read tools directly only for a single lookup. admin_run_code is read-only: a snippet can call only the read tools, so create, update, delete and run actions with the write tools, one direct call each.
 
 Without this sentence the agent has no reason to prefer the tool: the direct tools are in the same catalogue, and clients that load tools on demand show little more than the name and the first line of each description.  For the same reason, the first line of the description says when to use the tool, not only what it is.
 
@@ -197,7 +197,7 @@ Monty's duration limits count only the time the sandbox computes: the clock stop
 1. Add the `codemode` extra, and confirm the API of `pydantic-monty` and its supported Python subset (`async`/`await`, `asyncio.gather`, comprehensions, `dict` and `list` methods).
 2. Add the `CODEMODE_*` keys to `conf.DEFAULTS` and its validation to `checks.py`.
 3. Write the stub generator from `all_tools()` and `declared()`.
-4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.  When `CODEMODE_ENABLED` is on, `build_server()` also appends the code mode sentence to the server instructions.
+4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.  When `CODEMODE_ENABLED` is on, `build_server()` also adds the code mode paragraph to the server instructions.
 5. Verify that `current_user()` returns the token's user inside the inner calls.
 6. Nest the inner spans under the span of the run, and record the redacted snippet and its hash (decision 8).
 7. Update SPEC.md (sections 3, 4, 9 and 14) and the README.

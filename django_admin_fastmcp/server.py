@@ -59,17 +59,23 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
 
     disabled = set(conf.get("DISABLED_TOOLS"))
     with_codemode = codemode.is_enabled() and CODEMODE_TOOL not in disabled
-    instructions = (
+    orientation = (
         "The Django admin of this project, as tools. Start with "
         "admin_list_models to see what you may touch, then "
-        "admin_describe_model before reading or writing a model. "
+        "admin_describe_model before reading or writing a model."
+    )
+    previews = (
         "Destructive tools preview first: call them with confirm=false, "
         "read the answer, then confirm."
     )
     server = FastMCP(
         name=conf.get("SERVER_NAME"),
         auth=build_auth() if with_auth else None,
-        instructions=instructions + codemode.INSTRUCTIONS if with_codemode else instructions,
+        instructions=(
+            f"{orientation}\n\n{codemode.INSTRUCTIONS}\n\n{previews}"
+            if with_codemode
+            else f"{orientation} {previews}"
+        ),
     )
 
     registered = {

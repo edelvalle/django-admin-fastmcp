@@ -52,10 +52,19 @@ READ_TOOLS = (
 
 REDACTED = "[redacted]"
 
+# The paragraph of the server instructions that steers agents to admin_run_code.  Clients
+# show the instructions before they load any tool, and an agent left to itself keeps calling
+# the direct tools it already knows, so this is a rule with its reasons, not a mention.
 INSTRUCTIONS = (
-    " To combine the results of many tool calls in a deterministic way (loop over search "
-    "results, join, filter, count), write a Python snippet and send it in one admin_run_code "
-    "call instead of calling each tool directly. Only the snippet's final value comes back."
+    "Prefer admin_run_code for every read that takes more than one tool call: a search "
+    "followed by a call per result, combining several models, filtering, grouping or counting "
+    "rows, or checking many objects. Write one Python snippet that awaits the read tools and "
+    "computes the answer, and send it in a single admin_run_code call. It is faster than "
+    "calling the tools one by one, the computation is deterministic, and the intermediate "
+    "results stay out of your context: only the snippet's final value comes back. Call the "
+    "read tools directly only for a single lookup. admin_run_code is read-only: a snippet "
+    "can call only the read tools, so create, update, delete and run actions with the write "
+    "tools, one direct call each."
 )
 
 

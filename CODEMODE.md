@@ -32,7 +32,11 @@ The server then registers one more tool, `admin_run_code`, at the same `MCP_URL`
 
 ## How an agent finds and uses it
 
-With code mode on, the server instructions, which a client receives when it connects, gain a sentence: to combine the results of many tool calls in a deterministic way (loop over search results, join, filter, count), write a Python snippet and send it in one `admin_run_code` call.
+With code mode on, the server instructions, which a client receives when it connects, gain a paragraph between the orientation and the preview rule of the destructive tools:
+
+> Prefer admin_run_code for every read that takes more than one tool call: a search followed by a call per result, combining several models, filtering, grouping or counting rows, or checking many objects. Write one Python snippet that awaits the read tools and computes the answer, and send it in a single admin_run_code call. It is faster than calling the tools one by one, the computation is deterministic, and the intermediate results stay out of your context: only the snippet's final value comes back. Call the read tools directly only for a single lookup. admin_run_code is read-only: a snippet can call only the read tools, so create, update, delete and run actions with the write tools, one direct call each.
+
+An agent left to itself keeps calling the direct tools it already knows, so the paragraph is a rule with its reasons, not a mention.
 
 `admin_run_code` takes one argument, `code`.  Its description says when to use it, gives the rules and the limits of the sandbox, and lists a stub for each function the snippet can call.  The server generates these stubs from the tools themselves, so they include the read-only [declared tools](README.md#declared-tools) of your `ModelAdmin` classes:
 
