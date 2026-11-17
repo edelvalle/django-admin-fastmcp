@@ -31,7 +31,8 @@ def _resolves(label: str) -> bool:
 
 @register()
 def check_settings(app_configs, **kwargs):
-    from django_admin_fastmcp.server import all_tools
+    from django_admin_fastmcp.server import CODEMODE_TOOL, all_tools
+    from django_admin_fastmcp.tools import codemode
 
     errors = []
     configured = getattr(settings, "ADMIN_FASTMCP", {})
@@ -57,7 +58,7 @@ def check_settings(app_configs, **kwargs):
                     )
                 )
 
-    known_tools = set(all_tools())
+    known_tools = set(all_tools()) | {CODEMODE_TOOL}
     for name in conf.get("DISABLED_TOOLS"):
         if name not in known_tools:
             errors.append(
@@ -115,6 +116,15 @@ def check_settings(app_configs, **kwargs):
                 f"got {throttle_minutes!r}",
                 hint="use 0 or a negative value to turn last_used_at updates off",
                 id="django_admin_fastmcp.E007",
+            )
+        )
+
+    if conf.get("CODEMODE_ENABLED") and not codemode.is_available():
+        errors.append(
+            Error(
+                "ADMIN_FASTMCP['CODEMODE_ENABLED'] is on, but pydantic-monty is not installed",
+                hint='install the extra: "django-admin-fastmcp[codemode]"',
+                id="django_admin_fastmcp.E008",
             )
         )
 

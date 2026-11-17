@@ -102,6 +102,7 @@ include = [
     "/django_admin_fastmcp",
     "/README.md",
     "/CHANGELOG.md",
+    "/CODEMODE.md",
     "/LICENSE",
 ]
 

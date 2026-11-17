@@ -241,6 +241,12 @@ startup rather than silently returning `None`.
 | `LAST_USED_THROTTLE_MINUTES` | `1` | Minimum gap between `last_used_at` writes on token verification. `0` or negative turns them off, so the MCP server can run on a read-only replica. |
 | `SITE_URL` | `"http://127.0.0.1:8000"` | Public URL of the Django site, the OAuth issuer. |
 | `MCP_URL` | `"http://127.0.0.1:8765/admin/mcp"` | Public URL of the MCP endpoint. |
+| `CODEMODE_ENABLED` | `False` | Registers `admin_run_code` (section 4, "Code mode"), when the `codemode` extra is installed. |
+| `CODEMODE_TIMEOUT` | `30` | Seconds a code mode run may take, tool calls included. |
+| `CODEMODE_MAX_CALLS` | `100` | Tool calls a code mode run may make. |
+| `CODEMODE_MAX_PARALLEL` | `4` | Tool calls of one run at the same time.  Each holds a database connection. |
+| `CODEMODE_MAX_RESULT_BYTES` | `65536` | Maximum size of a run's result and `print` output.  A larger one is refused. |
+| `CODEMODE_MAX_MEMORY_BYTES` | `67108864` | Heap memory of the code mode sandbox. |
 
 `MCP_URL` is load-bearing. Three things derive from it and must agree, or the OAuth flow
 deadlocks:
@@ -261,7 +267,7 @@ POST.
 `checks.py` validates at startup: every name in `MODELS`, `EXCLUDE_MODELS`, and
 `WRITABLE_MODELS` resolves to a real model, every name in `DISABLED_TOOLS` is a real tool
 name, `ADMIN_SITE` imports, `MCP_URL` is an absolute http(s) URL with a path, and
-`SITE_URL` is an absolute http(s) URL. A bad value is an error, not a warning.
+`SITE_URL` is an absolute http(s) URL, and `CODEMODE_ENABLED` is off unless the `codemode` extra is installed. A bad value is an error, not a warning.
 
 ---
 
@@ -321,6 +327,10 @@ that model.
 
 This is not the per-model CRUD that D7 rejects: a declared tool is opt-in, named, and
 rare, one per operation the form cannot express.
+
+### Code mode
+
+With the `codemode` extra installed and `CODEMODE_ENABLED` on, one more tool, `admin_run_code(code)`, runs a Python snippet in a pydantic-monty sandbox.  The read tools (the generic ones and the declared tools without `write=True`) are async functions in the sandbox; each call goes back to the tool callable the server registered, in a worker thread, so permissions, spans and the audit log apply unchanged.  Only the snippet's final value goes back to the agent.  The write tools stay direct calls, because their preview protocol needs an agent that reads the preview.  The tool carries `readOnlyHint`, and the server instructions point the agent at it for combining many tool calls.  `CODEMODE.md` is the reference, and `docs/plans/codemode.md` the design.
 
 Tool docstrings are the model's only documentation. Write them for a reader who has never
 seen this Django project. State what the tool does, what the arguments mean, and what it
@@ -415,6 +425,8 @@ have no async counterpart. `async def` tools would force `sync_to_async` around 
 and buy nothing.
 
 Every write tool runs inside `transaction.atomic()`.
+
+The one exception is `admin_run_code` (section 4, "Code mode"), an `async def` tool: it runs no admin code itself, and the read tools it calls run in worker threads, like any other tool call.
 
 ---
 
@@ -636,7 +648,9 @@ admin history page distinguishes an agent edit from a person's edit.
 
 A `django_admin_fastmcp` logger emits one structured record per call: tool name, model
 label, user, client name, outcome, and duration. Denials log at `warning`. Secrets are
-never logged.
+never logged. A code mode run adds the number of its calls and its snippet with every string
+literal redacted except dict keys and `model=` values, plus a hash of the original snippet;
+each call of the run gets its own record too.
 
 `tracing.py` adds optional Sentry and Logfire instrumentation on the same wrapper,
 mirroring djhtmx: a span or transaction per tool call (op `mcp.tool`) tagged with tool,
@@ -657,7 +671,7 @@ by a language model. The rails are part of the specification, not an afterthough
 4. **Confirmation gates.** `delete_object` and `run_action` preview by default and change
    nothing until `confirm=True`. The preview uses the admin's own `get_deleted_objects`, so
    the cascade is exact.
-5. **Caps.** `MAX_PAGE_SIZE`, `MAX_PKS`, and a 256 KiB request body cap.
+5. **Caps.** `MAX_PAGE_SIZE`, `MAX_PKS`, and a 256 KiB request body cap.  A code mode run has its own: `CODEMODE_TIMEOUT`, `CODEMODE_MAX_CALLS`, `CODEMODE_MAX_PARALLEL`, `CODEMODE_MAX_RESULT_BYTES` and `CODEMODE_MAX_MEMORY_BYTES`.
 6. **Mandatory audit.** A write that cannot record a `LogEntry` rolls back.
 
 ---
@@ -799,4 +813,5 @@ only the README.
 | D6 | Sync or async tools | Sync `def` | The admin API is sync-only. Async would mean `sync_to_async` around all of it. |
 | D7 | Per-model tools | No, eleven generic tools | 700 tools is unusable for any client. |
 | D9 | Operations the admin form cannot express | Declared tools on the `ModelAdmin` (`@mcp_tool`), same gates and audit as the generic writes; `mcp_generic_writes = False` where rows must not change through the form. | A tree or an event log cannot be written row by row. Keeping the operation next to its model keeps the admin's permissions and log in charge, and the catalogue stays small: one tool per operation, not four per model. |
+| D10 | Code mode | Opt-in extra; read tools only, in a pydantic-monty sandbox, one worker process per run, each call its own unit of work; the run's snippet logged with its literals redacted. | Fewer round trips and less context for multi-step reads, without a second permission system and without writes that nobody previews. |
 | D8 | Should a superuser token be capped | Open | An unrestricted superuser token is the stated requirement and also a remote shell. Revisit after M2, once the audit log shows how the tools get used. |

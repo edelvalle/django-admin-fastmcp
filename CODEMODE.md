@@ -1,15 +1,15 @@
 # Code mode
 
-> **Draft.**  Code mode is not released yet.  This document describes the intended behavior, and [the design plan](docs/plans/codemode.md) records its decisions.  Points marked **Open** follow decisions that the plan has not made yet.
-
-Code mode lets an agent send a short Python snippet in one tool call.  The snippet calls several admin tools and combines their output, and only its final value goes back to the agent.
+Code mode lets an agent send a short Python snippet in one tool call.  The snippet calls several read tools and combines their output, and only its final value goes back to the agent.
 
 This has two benefits:
 
 - **Fewer round trips.**  A task that needs a search and then one call for each result (1 + N calls) becomes a single call.
 - **Less context.**  The intermediate results stay on the server.  The agent receives only the value that the snippet computes from them.
 
-The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox.  Inside the sandbox each admin tool is an async function, and the snippet can't reach anything else: no Django imports, no file system, no network.
+The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbox: a Python interpreter in a separate process.  Inside the sandbox each read tool is an async function, and the snippet can't reach anything else.  It can import only Monty's own part of the standard library (no Django, no project code, no installed packages), and it has no file system, no network and no environment variables.
+
+[The design plan](docs/plans/codemode.md) records the decisions behind this document.
 
 ## Installation
 
@@ -19,7 +19,7 @@ Code mode is an optional extra:
 uv add "django-admin-fastmcp[codemode]"
 ```
 
-Then turn it on with `CODEMODE_ENABLED` (see [Settings](#settings)).  You write no code:
+It is off by default.  Turn it on with `CODEMODE_ENABLED`; you write no code:
 
 ```python
 ADMIN_FASTMCP = {
@@ -27,85 +27,80 @@ ADMIN_FASTMCP = {
     "CODEMODE_ENABLED": True,
 }
 ```
-  When the extra is installed and the setting turns it on, the server registers one more tool, `admin_run_code`, at the same `MCP_URL` as the other tools.  `DISABLED_TOOLS` can remove it like any other tool (`"run_code"`).
 
-A startup check reports an error when `CODEMODE_ENABLED` turns the tool on but the extra is not installed.
+The server then registers one more tool, `admin_run_code`, at the same `MCP_URL` as the other tools, with the MCP hint `readOnlyHint`.  `DISABLED_TOOLS` can remove it like any other tool (`"run_code"`).  A startup check (`django_admin_fastmcp.E008`) reports an error when `CODEMODE_ENABLED` is on but the extra is not installed.
 
-## How an agent uses it
+## How an agent finds and uses it
 
-`admin_run_code` takes one argument, `code`.  Its description tells the agent the rules of the sandbox and lists a stub for each function the snippet can call.  The server generates these stubs from the tools themselves, so they include the [declared tools](README.md#declared-tools) of your `ModelAdmin` classes:
+With code mode on, the server instructions, which a client receives when it connects, gain a sentence: to combine the results of many tool calls in a deterministic way (loop over search results, join, filter, count), write a Python snippet and send it in one `admin_run_code` call.
+
+`admin_run_code` takes one argument, `code`.  Its description says when to use it, gives the rules and the limits of the sandbox, and lists a stub for each function the snippet can call.  The server generates these stubs from the tools themselves, so they include the read-only [declared tools](README.md#declared-tools) of your `ModelAdmin` classes:
 
 ```python
-async def search_objects(model: str, q: str | None = None, filters: dict[str, Any] | None = None,
-                         order_by: list[str] | None = None, page: int = 1,
-                         page_size: int = 25) -> dict[str, Any]: ...
-async def get_object(model: str, pk: str) -> dict[str, Any]: ...
-async def object_history(model: str, pk: str) -> list[dict[str, Any]]: ...
+async def search_objects(model: str, q: str | None = None, filters: dict[str, Any] | None = None, order_by: list[str] | None = None, page: int = 1, page_size: int = 25) -> dict[str, Any]:
+    """Search rows of one model, as the admin changelist would."""
+
+async def object_history(model: str, pk: str) -> list[dict[str, Any]]:
+    """Read the admin history of one object, newest first."""
 ```
 
 For example, this snippet finds the open orders that have no admin history.  It is one tool call instead of 51:
 
 ```python
-orders = await search_objects(model="demo.order", filters={"status": "open"}, page_size=50)
-histories = await asyncio.gather(*(
-    object_history(model="demo.order", pk=o["pk"]) for o in orders["results"]
-))
+import asyncio
+
+orders = await search_objects(model="shop.order", filters={"status": "open"}, page_size=50)
+histories = await asyncio.gather(
+    *(object_history(model="shop.order", pk=row["pk"]) for row in orders["rows"])
+)
 [
-    {"order": o["pk"], "admin_url": o["admin_url"]}
-    for o, h in zip(orders["results"], histories)
-    if not h
+    {"order": row["pk"], "admin_url": row["admin_url"]}
+    for row, history in zip(orders["rows"], histories)
+    if not history
 ]
 ```
 
-The result has two keys: `result`, the value of the last expression, and `stdout`, the captured `print` output.
+The tool result has two keys: `result`, the value of the last expression, and `stdout`, the captured `print` output.
 
-The server type-checks the snippet against the stubs before it runs it.  A misspelled function or a wrong argument type fails before the first tool call.
+The server type-checks the snippet against the stubs before it runs it.  A misspelled function, a write tool, or a wrong argument type fails before the first tool call, and the error points at the line of the snippet.
 
 ## Which tools a snippet can call
 
-**Open.**  The read tools are always available: `list_models`, `describe_model`, `search_objects`, `get_object`, `object_history`, `recent_actions`, `autocomplete`, and the declared tools without `write=True`.
+Only the tools that read: `list_models`, `describe_model`, `search_objects`, `get_object`, `object_history`, `recent_actions`, `autocomplete`, and the declared tools without `write=True`.  A tool that `DISABLED_TOOLS` removes is absent from the sandbox too.
 
-Write tools are not decided yet.  The preview protocol of `delete_object` and `run_action` assumes that the agent reads the preview before it confirms, and inside a snippet nobody reads it.  The options in the plan range from read tools only to every tool, with confirmation forced off or turned into proposals that the agent applies with direct calls.
+The write tools stay direct calls.  The preview protocol of `delete_object` and `run_action` relies on an agent that reads the preview before it confirms, and inside a snippet nobody reads it.
 
 ## Permissions
 
 A call from a snippet runs the same tool code as a direct call, as the same user:
 
-- The `ModelAdmin` permission checks, `WRITABLE_MODELS` and `REDACT_FIELDS` apply unchanged.  Code mode adds no permission system of its own.
+- The `ModelAdmin` permission checks and `REDACT_FIELDS` apply unchanged.  Code mode adds no permission system of its own.
 - Arguments are validated and coerced the same way as in a direct call.
-- A refusal (`ToolRefusalError`) reaches the snippet as an exception, and the snippet can catch it.  An exception that the snippet doesn't catch stops the run, and the tool result shows the message and the line of the snippet.
+- A refused call raises an exception in the snippet, which the snippet may catch.  An exception that the snippet doesn't catch stops the run, and the tool result shows the message and a traceback with the line of the snippet.
+- A bug in a tool reaches the snippet as an internal error, without details.  The details go to the log and to Sentry, as for a direct call.
+
+Each tool call is its own unit of work, as with direct calls: the calls of one run read the database at different moments, not from one snapshot.
 
 ## Limits
 
-Each run is bounded:
+| Key | Default | Meaning |
+|---|---|---|
+| `CODEMODE_ENABLED` | `False` | Registers `admin_run_code`. |
+| `CODEMODE_TIMEOUT` | `30` | Seconds a whole run may take, tool calls included. |
+| `CODEMODE_MAX_CALLS` | `100` | Tool calls a run may make.  Over it, the run is refused, even when the snippet catches the error. |
+| `CODEMODE_MAX_PARALLEL` | `4` | Tool calls that may run at the same time.  Each one holds a database connection: raise it with your connection pool. |
+| `CODEMODE_MAX_RESULT_BYTES` | `65536` | Maximum size of the result and of the `print` output, as JSON.  A larger result is refused, and the agent is told to reduce it in the snippet. |
+| `CODEMODE_MAX_MEMORY_BYTES` | `67108864` | Heap memory of the sandbox (64 MiB). |
 
-- A timeout for the whole run.
-- A maximum number of tool calls.
-- A maximum number of tool calls running at the same time.  Each one holds a database connection, so the default suits a small connection pool.
-- A maximum size for the result.  **Open:** the server either refuses a result that is too large, telling the agent to reduce it in the snippet, or truncates it with a marker.
-- The memory, allocation and recursion limits of the Monty sandbox.
+When a run times out, it stops at once and no new tool call starts.  A tool call that is already running a query can't be stopped, so that query finishes in the background and its result is dropped.
 
-Each tool call inside a snippet is its own unit of work, as with direct calls.  **Open:** whether a whole run reads one consistent snapshot in a single read-only transaction.
-
-## Settings
-
-The keys live in the `ADMIN_FASTMCP` dict, next to the other settings, with the prefix `CODEMODE_`.
-
-**Open.**  The keys below are the planned ones.  Their defaults, and whether code mode is on by default once the extra is installed, are not decided yet.
-
-| Key | Meaning |
-|---|---|
-| `CODEMODE_ENABLED` | Registers `admin_run_code`. |
-| `CODEMODE_TIMEOUT` | Seconds a whole run may take. |
-| `CODEMODE_MAX_CALLS` | Tool calls a run may make. |
-| `CODEMODE_MAX_PARALLEL` | Tool calls that may run at the same time.  Raise it with your database connection pool. |
-| `CODEMODE_MAX_RESULT_BYTES` | Maximum size of the result. |
+Each run starts its own Monty worker process, which costs about 10 ms, and the worker ends with the run: nothing survives from one run to the next.
 
 ## Observability
 
-A run opens one span, `admin_run_code`, and the spans of the tool calls it makes nest under it.  The audit log keeps one record for each tool call, as for direct calls, and one record for the run with the number of calls.
+A run opens one span, `admin_run_code`, and the spans of the tool calls it makes nest under it.  The audit log keeps one record for each tool call, as for direct calls, and one record for the run, with the number of calls (`mcp_calls`).
 
-The span and the audit record of the run keep the snippet with its data redacted, plus a hash of the original snippet to group the runs of the same one.  A snippet can contain search terms and personal data, so before it records the snippet the server:
+The span and the audit record of the run keep the snippet with its data redacted (`mcp_snippet`), plus a SHA-256 hash of the original snippet to group the runs of the same one (`mcp_snippet_sha256`).  A snippet can contain search terms and personal data, so before it records the snippet the server:
 
 - replaces every string literal with `"[redacted]"`, except dict keys (field names and lookups such as `"status__in"`) and the value of `model=`;
 - drops the comments.

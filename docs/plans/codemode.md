@@ -13,7 +13,7 @@ The snippet runs in a [pydantic-monty](https://github.com/pydantic/monty) sandbo
 
 The package provides code mode on its own: an optional extra and the `CODEMODE_*` keys of `ADMIN_FASTMCP`.  A consumer installs the extra and turns the setting on.  The consumer writes no code.
 
-This document describes the design and its decisions.  Decisions 1, 4 and 8 are made; the others are open.
+This document describes the design and its decisions.  All decisions are made, and code mode is implemented in `django_admin_fastmcp/tools/codemode.py`.
 
 ## Current state
 
@@ -89,43 +89,18 @@ histories = await asyncio.gather(*(
 
 The result contains the value of the last expression and the captured `print` output.
 
-### Server sketch
+### How a run works
 
-```python
-# django_admin_fastmcp/tools/codemode.py
-async def run_code(code: str) -> dict[str, Any]:
-    """<generated: the rules, the limits, and the stubs>"""
-    tools = sandbox_tools()                 # name -> validate_call(instrument(...))
-    max_calls = conf.get("CODEMODE_MAX_CALLS")
-    limiter = anyio.CapacityLimiter(conf.get("CODEMODE_MAX_PARALLEL"))
-    calls = itertools.count(1)
-    printed: list[str] = []
+The API of pydantic-monty 1.6.0 differs from its README: `AsyncMonty` is a pool of `monty` worker processes, `checkout()` gives a session, and `session.feed_run(code, external_lookup=..., print_callback=...)` runs the snippet.  A run of `admin_run_code`:
 
-    def bridge(fn):
-        async def call(*args, **kwargs):
-            if next(calls) > max_calls:
-                raise ToolRefusalError(f"over CODEMODE_MAX_CALLS={max_calls}")
-            return await anyio.to_thread.run_sync(
-                functools.partial(with_fresh_connections(fn), *args, **kwargs), limiter=limiter
-            )
-        return call
+1. Records the redacted snippet and its hash (decision 8) through `tracing.annotate()`.
+2. Opens a pool of one worker (decision 9), checks out a session with the stubs, `type_check=True` and the Monty limits, and feeds the snippet.  The whole run is inside `anyio.fail_after(CODEMODE_TIMEOUT)` (decision 10).
+3. Serves each function of the sandbox with a bridge: it counts the call against `CODEMODE_MAX_CALLS`, then runs the registered tool callable in a worker thread through `anyio.to_thread.run_sync`, under a `CapacityLimiter(CODEMODE_MAX_PARALLEL)`.  In the thread it validates the arguments with pydantic, as FastMCP does for a direct call.
+4. Converts the result to JSON and refuses it when it is larger than `CODEMODE_MAX_RESULT_BYTES` (decision 7).
 
-    snippet = pydantic_monty.Monty(
-        code, external_functions=list(tools), script_name="snippet.py",
-        type_check=True, type_check_stubs=STUBS,
-    )
-    output = await pydantic_monty.run_monty_async(
-        snippet,
-        external_functions={name: bridge(fn) for name, fn in tools.items()},
-        limits=pydantic_monty.ResourceLimits(max_duration_secs=conf.get("CODEMODE_TIMEOUT"), ...),
-        print_callback=lambda _stream, text: printed.append(text),
-    )
-    return bounded({"result": output, "stdout": "".join(printed)})
-```
+The bridge refuses to start a tool once the run is over, whatever ended it.  Monty does not cancel the host calls that it abandons, so without this check the calls that wait in the limiter's queue run after a timeout.  The check runs in the worker thread, right before the tool, because a queued call reaches a thread only after the limiter lets it through.
 
-The Monty names (`Monty`, `run_monty_async`, `ResourceLimits`, `type_check_stubs`, `print_callback`) come from its README.  Check them against the version that the extra pins.
-
-The bridge uses a worker thread for each call (decision 4, option A).
+Never pass `mount`, `os` or `external_modules` to Monty.  With the defaults a snippet can import only Monty's own part of the standard library, and it has no file system, network or environment: this was verified against 1.6.0, with the code of a Django project on the host's `PYTHONPATH` and in the working directory.  A mounted directory makes its `.py` files importable in the sandbox, and an `os` handler gives the sandbox whatever the handler returns.
 
 ## Properties that hold for all options
 
@@ -143,7 +118,7 @@ The bridge uses a worker thread for each call (decision 4, option A).
 
 Code mode is part of `django-admin-fastmcp`, as the `codemode` extra.  It depends on the internals of the package (`all_tools`, `declared`, `instrument`, `with_fresh_connections`).  A consumer that kept it in its own code would depend on these internals.
 
-### 2. Which tools the sandbox exposes
+### 2. Which tools the sandbox exposes — decided: A
 
 The preview protocol of destructive tools depends on the agent: it reads the preview, and then it confirms.  In a snippet, `run_action(..., confirm=True)` runs without a preview that anybody reads.
 
@@ -154,10 +129,14 @@ The preview protocol of destructive tools depends on the agent: it reads the pre
 
 Decision D8 of SPEC.md (a cap on superuser tokens) is still open, and it affects this decision.
 
-### 3. Which endpoint serves it
+The current decision is A.  `admin_run_code` carries `readOnlyHint`, and a write tool in a snippet fails the type check, because it has no stub.
+
+### 3. Which endpoint serves it — decided: A
 
 - **A. One more tool on the existing app** (`MCP_URL`).  The OAuth grant, the token audience and the client configuration stay the same.  The async tool is the async path.
 - **B. A dedicated app or mount** (for example `<MCP_URL>/code`, or a separate process).  It can have its own worker pool, timeouts and resource limits.  It needs its own protected-resource URL and token audience, because the verifier compares the audience with `MCP_URL` in full.  Clients then configure a second MCP server and give a second consent, unless the auth layer accepts more than one audience.  `admin_mcp_serve` and the phase 2 mount (SPEC.md section 12) then serve two apps.
+
+The current decision is A.
 
 ### 4. How the bridge calls the tools — decided: A
 
@@ -167,22 +146,25 @@ Decision D8 of SPEC.md (a cap on superuser tokens) is still open, and it affects
 
 The current decision is A.  The tools are sync, and A needs no change to them.  A snippet can still run its calls in parallel with `asyncio.gather`.  If the tools become native async, the bridge can change to B.  The snippets and the stubs do not change, because they already see async functions.
 
-### 5. Transactions
+### 5. Transactions — decided: A
 
 - **A. Each inner call is its own unit**, as today.  The snippet can read data from different points in time.
 - **B. One transaction for the whole run** (for example `REPEATABLE READ`, read only).  The snippet then reads one consistent snapshot.  With the worker threads of decision 4, all inner calls must then share one connection, so the calls run one after the other.
 
-### 6. The `CODEMODE_*` settings and their defaults
+The current decision is A.  It keeps parallel calls, and the tool description tells the agent that the calls do not read one snapshot.
 
-The keys are flat keys of `ADMIN_FASTMCP`, like the existing ones: `CODEMODE_ENABLED`, `CODEMODE_TIMEOUT`, `CODEMODE_MAX_CALLS`, `CODEMODE_MAX_PARALLEL` and `CODEMODE_MAX_RESULT_BYTES`, plus the Monty limits (memory, allocations, recursion depth).  Open points:
+### 6. The `CODEMODE_*` settings and their defaults — decided
 
-- Is code mode on or off by default when the extra is installed?
-- The default values.  With worker threads (decision 4), each parallel call holds one database connection.  The default `CODEMODE_MAX_PARALLEL` must be safe for a small connection pool, and a consumer raises it.
+The keys are flat keys of `ADMIN_FASTMCP`, like the existing ones: `CODEMODE_ENABLED`, `CODEMODE_TIMEOUT`, `CODEMODE_MAX_CALLS`, `CODEMODE_MAX_PARALLEL`, `CODEMODE_MAX_RESULT_BYTES` and `CODEMODE_MAX_MEMORY_BYTES`.
 
-### 7. A result that is too large
+Code mode is off by default, even with the extra installed: a deployment turns it on explicitly.  The defaults are 30 seconds, 100 calls, 4 parallel calls, 64 KiB of result and 64 MiB of sandbox memory.  With worker threads (decision 4), each parallel call holds one database connection, so the default `CODEMODE_MAX_PARALLEL` is small, and a consumer raises it with its connection pool.  Monty's recursion depth keeps its default (1000), and its suspension budget follows `CODEMODE_MAX_CALLS`.
+
+### 7. A result that is too large — decided: A
 
 - **A. Refuse it** with an error that tells the agent to reduce the result in the snippet.
 - **B. Truncate it** and add a marker that tells the agent.
+
+The current decision is A: no silently partial data.  The limit covers the `print` output too.
 
 ### 8. What the span and the audit log record — decided: B
 
@@ -198,6 +180,17 @@ The current decision is B.  Direct calls record no arguments today: `instrument(
 - The record also keeps a hash of the original snippet, to group the runs of the same snippet.  A snippet that does not parse keeps only its hash.
 
 The redacted snippet goes into an attribute of the run's span and into the `extra` of its audit record.
+
+### 9. Who owns the Monty worker processes — decided: A
+
+- **A. A pool for each run.**  It costs about 10 ms per run.  Nothing outlives the run, nothing joins the ASGI lifespan, and no state can pass from one user's run to another's.
+- **B. One pool for the app**, started and stopped with the ASGI lifespan, in `admin_mcp_serve` and in the mounted app.  It saves the start-up cost, but the pool belongs to one event loop, and its workers serve many runs.
+
+The current decision is A.  A shared pool can come later, if the start-up cost shows.
+
+### 10. What `CODEMODE_TIMEOUT` bounds — decided: the whole run
+
+Monty's duration limits count only the time the sandbox computes: the clock stops while the snippet waits on the host, so a snippet of slow queries never reaches them.  `anyio.fail_after(CODEMODE_TIMEOUT)` bounds the whole run, tool calls included, and Monty's `max_feed_duration_secs` stays as a guard against a snippet that only computes.  A query that runs when the deadline passes cannot be stopped (a thread cannot be killed); it finishes in the background, and the run does not wait for it.
 
 ## Steps (after the decisions)
 

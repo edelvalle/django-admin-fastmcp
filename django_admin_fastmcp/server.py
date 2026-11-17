@@ -4,6 +4,9 @@ Eleven generic tools, mounted under the namespace "admin", so wire names are
 "admin_list_models" and so on. The tool list is static and does not vary per
 user. Sync `def` tools: FastMCP runs them in a worker thread, where Django's
 sync ORM is legal (SPEC.md section 6).
+
+With code mode on (CODEMODE.md), one more tool, admin_run_code, is async: it
+runs no admin code itself, and the read tools it calls run in worker threads.
 """
 
 from collections.abc import Callable
@@ -15,6 +18,8 @@ from django_admin_fastmcp.auth import build_auth, with_fresh_connections
 
 MAX_BODY_BYTES = 256 * 1024
 NAMESPACE = "admin"
+# The catalogue name of admin_run_code, outside all_tools(): it exists only with code mode on.
+CODEMODE_TOOL = "run_code"
 
 
 def all_tools() -> dict[str, Callable]:
@@ -49,29 +54,44 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
     `with_auth=False` skips the bearer-token layer, for the in-memory test
     transport, which carries no HTTP headers. Never serve it over a network.
     """
-    server = FastMCP(
-        name=conf.get("SERVER_NAME"),
-        auth=build_auth() if with_auth else None,
-        instructions=(
-            "The Django admin of this project, as tools. Start with "
-            "admin_list_models to see what you may touch, then "
-            "admin_describe_model before reading or writing a model. "
-            "Destructive tools preview first: call them with confirm=false, "
-            "read the answer, then confirm."
-        ),
-    )
+    from django_admin_fastmcp.tools import codemode
     from django_admin_fastmcp.tracing import instrument
 
     disabled = set(conf.get("DISABLED_TOOLS"))
-    for name, fn in all_tools().items():
-        if name not in disabled:
-            server.tool(with_fresh_connections(instrument(name, fn)), name=f"{NAMESPACE}_{name}")
-    for name, (fn, model) in declared().items():
-        if name not in disabled:
-            server.tool(
-                with_fresh_connections(instrument(name, fn, model=model)),
-                name=f"{NAMESPACE}_{name}",
-            )
+    with_codemode = codemode.is_enabled() and CODEMODE_TOOL not in disabled
+    instructions = (
+        "The Django admin of this project, as tools. Start with "
+        "admin_list_models to see what you may touch, then "
+        "admin_describe_model before reading or writing a model. "
+        "Destructive tools preview first: call them with confirm=false, "
+        "read the answer, then confirm."
+    )
+    server = FastMCP(
+        name=conf.get("SERVER_NAME"),
+        auth=build_auth() if with_auth else None,
+        instructions=instructions + codemode.INSTRUCTIONS if with_codemode else instructions,
+    )
+
+    registered = {
+        name: with_fresh_connections(instrument(name, fn))
+        for name, fn in all_tools().items()
+        if name not in disabled
+    } | {
+        name: with_fresh_connections(instrument(name, fn, model=model))
+        for name, (fn, model) in declared().items()
+        if name not in disabled
+    }
+    for name, fn in registered.items():
+        server.tool(fn, name=f"{NAMESPACE}_{name}")
+
+    if with_codemode:
+        run_code, description = codemode.build_run_code(registered)
+        server.tool(
+            instrument(CODEMODE_TOOL, run_code),
+            name=f"{NAMESPACE}_{CODEMODE_TOOL}",
+            description=description,
+            annotations={"readOnlyHint": True},
+        )
     return server
 
 

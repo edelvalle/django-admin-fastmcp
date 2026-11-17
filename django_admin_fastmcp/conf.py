@@ -39,6 +39,15 @@ DEFAULTS: dict[str, Any] = {
     # the endpoint is served on. The admin owns "/admin/mcp", next to the
     # OAuth endpoints at "/admin/mcp/authorize" and friends.
     "MCP_URL": "http://127.0.0.1:8765/admin/mcp",
+    # Code mode (CODEMODE.md): the admin_run_code tool, with the `codemode` extra.  Off by
+    # default.  Each call running at the same time holds a database connection, so the
+    # default parallelism suits a small connection pool.
+    "CODEMODE_ENABLED": False,
+    "CODEMODE_TIMEOUT": 30,
+    "CODEMODE_MAX_CALLS": 100,
+    "CODEMODE_MAX_PARALLEL": 4,
+    "CODEMODE_MAX_RESULT_BYTES": 64 * 1024,
+    "CODEMODE_MAX_MEMORY_BYTES": 64 * 1024 * 1024,
 }
 
 
