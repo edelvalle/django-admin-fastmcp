@@ -104,12 +104,13 @@ Each run starts its own Monty worker process, which costs about 10 ms, and the w
 
 A run opens one span, `admin_run_code`, and the spans of the tool calls it makes nest under it.  The audit log keeps one record for each tool call, as for direct calls, and one record for the run, with the number of calls (`mcp_calls`).
 
-The span and the audit record of the run keep the snippet with its data redacted (`mcp_snippet`), plus a SHA-256 hash of the original snippet to group the runs of the same one (`mcp_snippet_sha256`).  A snippet can contain search terms and personal data, so before it records the snippet the server:
+The span and the audit record of the run keep the snippet with its data redacted (`mcp_snippet`), a SHA-256 hash of the original snippet to group the runs of the same one (`mcp_snippet_sha256`), and the sorted names of the tools it called (`mcp_tools`).  A snippet can contain search terms and personal data, so before it records the snippet the server:
 
-- replaces every string literal with `"[redacted]"`, except dict keys (field names and lookups such as `"status__in"`) and the value of `model=`;
+- replaces every string literal with `"[redacted]"`, dict keys included, because a key can be data as much as a value;
+- keeps the value of `model=` only when it names an installed model;
 - drops the comments.
 
-Numbers, booleans and `None` stay.  A snippet that is not valid Python is recorded by its hash only.
+Numbers, booleans, `None` and identifiers stay: don't name variables after the data.  A snippet that is not valid Python is recorded by its hash only.
 
 For example, this snippet:
 
@@ -121,5 +122,7 @@ await search_objects(model="crm.customer", q="maria.garcia@example.com", filters
 is recorded as:
 
 ```python
-await search_objects(model='crm.customer', q='[redacted]', filters={'status': '[redacted]'})
+await search_objects(model='crm.customer', q='[redacted]', filters={'[redacted]': '[redacted]'})
 ```
+
+A refused or failed run, like any tool call, shows its full error message to the agent only.  The Logfire span keeps the exception type (`mcp.error_type`), not the message, because messages quote the caller's data.

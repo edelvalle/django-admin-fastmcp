@@ -15,6 +15,7 @@ sandbox (a mounted directory makes its `.py` files importable).
 """
 
 import ast
+import functools
 import hashlib
 import inspect
 import json
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import anyio
+from django.apps import apps
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 
@@ -247,16 +249,31 @@ Functions:
 # -- the snippet in the span and the audit record -----------------------------------------
 
 
-class _LiteralRedactor(ast.NodeTransformer):
-    """Replace string and bytes literals with REDACTED, except the ones that name the
-    schema: dict keys (field names and lookups) and the value of `model=`."""
+# Bounded, because the labels come from snippets: an unbounded cache would grow with every
+# distinct string an agent passes as `model=`, and keep those strings in memory.
+@functools.lru_cache(maxsize=256)
+def _names_a_model(label: str) -> bool:
+    try:
+        apps.get_model(label)
+    except (LookupError, ValueError):
+        return False
+    return True
 
-    def visit_Dict(self, node: ast.Dict) -> ast.Dict:
-        node.values = [self.visit(value) for value in node.values]
-        return node
+
+def _is_model_label(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _names_a_model(node.value)
+    )
+
+
+class _LiteralRedactor(ast.NodeTransformer):
+    """Replace every string and bytes literal with REDACTED, dict keys included, except a
+    `model=` value that names an installed model."""
 
     def visit_keyword(self, node: ast.keyword) -> ast.keyword:
-        if node.arg == "model":
+        if node.arg == "model" and _is_model_label(node.value):
             return node
         else:
             return self.generic_visit(node)  # type: ignore[return-value]
@@ -269,12 +286,14 @@ class _LiteralRedactor(ast.NodeTransformer):
 
 
 def redact_snippet(code: str) -> str | None:
-    """The snippet without its data, for the span and the audit record; None when it does
-    not parse.
+    """Return the structure of the snippet `code` without its data, for the span and the audit
+    record, or None when it does not parse.
 
-    String and bytes literals become "[redacted]", except dict keys and the value of
-    `model=`; numbers, booleans and None stay; comments go, because the result is
-    `ast.unparse` of the redacted tree.
+    Every string and bytes literal becomes "[redacted]", dict keys included, because a key
+    can be data as much as a value; only a `model=` value that names an installed model stays.
+    Numbers, booleans and None stay.  Comments go, because the result is `ast.unparse` of
+    the redacted tree.  Identifiers stay as written, so a variable named after a person
+    still names them.
 
     """
     try:
@@ -329,6 +348,7 @@ async def _run_snippet(code: str, tools: Mapping[str, SandboxTool], stubs: str) 
     limiter = anyio.CapacityLimiter(conf.get("CODEMODE_MAX_PARALLEL"))
     finished = threading.Event()
     calls = 0
+    called_tools: set[str] = set()
     printed: list[str] = []
     printed_bytes = 0
 
@@ -336,6 +356,7 @@ async def _run_snippet(code: str, tools: Mapping[str, SandboxTool], stubs: str) 
         async def call(*args, **kwargs):
             nonlocal calls
             calls += 1
+            called_tools.add(tool.name)
             if calls > max_calls:
                 raise ToolRefusalError(f"over CODEMODE_MAX_CALLS={max_calls}")
             return await anyio.to_thread.run_sync(
@@ -382,7 +403,7 @@ async def _run_snippet(code: str, tools: Mapping[str, SandboxTool], stubs: str) 
         raise ToolRefusalError(f"the run took over CODEMODE_TIMEOUT={timeout} seconds") from None
     finally:
         finished.set()
-        tracing.annotate(calls=calls)
+        tracing.annotate(calls=calls, tools=sorted(called_tools))
 
     if calls > max_calls:
         # The snippet may have caught the refusal and carried on with partial data.
