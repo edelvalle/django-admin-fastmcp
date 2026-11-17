@@ -82,8 +82,19 @@ def _logfire_span(name: str, tags: dict[str, str]):
     if not _logfire_on():
         yield None
         return
+    # Logfire records the message and traceback of an exception that leaves the span, and
+    # tool errors quote the caller's data (a pk, a filter value, a snippet's traceback).  The
+    # exception leaves the span already caught, so the span keeps its type only.
+    error: BaseException | None = None
     with logfire.span(name, op="mcp.tool", **tags) as span:
-        yield span
+        try:
+            yield span
+        except BaseException as exc:
+            error = exc
+            span.set_level("warn" if isinstance(exc, ToolError) else "error")
+            span.set_attribute("mcp.error_type", type(exc).__qualname__)
+    if error is not None:
+        raise error
 
 
 @contextlib.contextmanager

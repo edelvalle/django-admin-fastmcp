@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Security
+
+- The Logfire span of a tool call keeps the type of the exception that ended it (`mcp.error_type`), not its message nor its traceback, which quote the caller's data (a pk, a filter value, the traceback of a snippet, which quotes its lines as written).
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
