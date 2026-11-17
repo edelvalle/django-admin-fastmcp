@@ -54,6 +54,12 @@ MCP client ──▶ MCP_URL (admin_mcp_serve, or a mounted app)
 
 ### What the agent sees
 
+The server instructions, which a client receives when it connects and usually shows to the model before it loads any tool, gain one sentence when `CODEMODE_ENABLED` is on.  `build_server()` appends it to the text it passes to `FastMCP(instructions=...)`:
+
+> To combine the results of many tool calls in a deterministic way (loop over search results, join, filter, count), write a Python snippet and send it in one `admin_run_code` call instead of calling each tool directly.  Only the snippet's final value comes back.
+
+Without this sentence the agent has no reason to prefer the tool: the direct tools are in the same catalogue, and clients that load tools on demand show little more than the name and the first line of each description.  For the same reason, the first line of the description says when to use the tool, not only what it is.
+
 The description of `admin_run_code` contains:
 
 - The rules of the sandbox (what Python it supports, how to return a value, the limits).
@@ -198,7 +204,7 @@ The redacted snippet goes into an attribute of the run's span and into the `extr
 1. Add the `codemode` extra, and confirm the API of `pydantic-monty` and its supported Python subset (`async`/`await`, `asyncio.gather`, comprehensions, `dict` and `list` methods).
 2. Add the `CODEMODE_*` keys to `conf.DEFAULTS` and its validation to `checks.py`.
 3. Write the stub generator from `all_tools()` and `declared()`.
-4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.
+4. Write the bridge and `run_code`, with the limits, and register it in `build_server()`.  When `CODEMODE_ENABLED` is on, `build_server()` also appends the code mode sentence to the server instructions.
 5. Verify that `current_user()` returns the token's user inside the inner calls.
 6. Nest the inner spans under the span of the run, and record the redacted snippet and its hash (decision 8).
 7. Update SPEC.md (sections 3, 4, 9 and 14) and the README.
