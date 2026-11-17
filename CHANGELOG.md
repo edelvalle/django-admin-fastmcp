@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
+### Fixed
+
+- A `ToolRefusalError` no longer reaches Sentry as an error event.  Sentry's own MCP integration, which turns itself on when `mcp` is installed, reported every exception a tool raised; a global event processor, registered when the app loads, now drops the events of refusals.
+
 ### Security
 
 - The snippet that `admin_run_code` records has its dict keys redacted too, since a key can be data as much as a value, and keeps a `model=` value only when it names an installed model.  The run's span and audit record also list the tools the snippet called (`mcp_tools`).

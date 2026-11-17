@@ -13,7 +13,9 @@ What reaches Sentry per tool call:
 - tags: mcp.tool, mcp.model, mcp.outcome, mcp.client,
 - the calling Django user as the Sentry user,
 - a counter per tool and outcome, and a duration distribution per tool,
-- the exception, for outcomes that are bugs rather than denials.
+- the exception, for outcomes that are bugs rather than denials.  A global
+  event processor drops the error events of a `ToolRefusalError`, which
+  Sentry's own MCP integration would report.
 """
 
 import contextlib
@@ -28,7 +30,7 @@ from typing import Any
 import anyio
 
 from django_admin_fastmcp import conf
-from django_admin_fastmcp.errors import ToolError
+from django_admin_fastmcp.errors import ToolError, ToolRefusalError
 
 try:
     import sentry_sdk
@@ -114,6 +116,37 @@ def tracing_span(name: str, **tags: str):
                 logfire_span.set_attribute(key, value)
 
         yield set_attribute
+
+
+# -- Sentry events -------------------------------------------------------------
+
+
+def drop_refusal_event(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
+    """Sentry event processor: drop the error event of a `ToolRefusalError`, keep the rest.
+
+    A refusal is the caller's mistake, not a server fault, yet Sentry's own MCP integration
+    (enabled by itself when `mcp` is installed) reports every exception a tool raises.
+
+    """
+    exc_info = hint.get("exc_info")
+    if exc_info is not None and isinstance(exc_info[1], ToolRefusalError):
+        return None
+    else:
+        return event
+
+
+def install_sentry_event_processor() -> None:
+    """Register `drop_refusal_event`:func: as a global Sentry event processor, once.
+
+    Does nothing without `sentry_sdk`.  Global processors run on every event, whichever
+    client sends it, and alongside the processors of other libraries.
+
+    """
+    if sentry_sdk is not None:
+        from sentry_sdk.scope import add_global_event_processor, global_event_processors
+
+        if drop_refusal_event not in global_event_processors:
+            add_global_event_processor(drop_refusal_event)
 
 
 # -- metrics -----------------------------------------------------------------

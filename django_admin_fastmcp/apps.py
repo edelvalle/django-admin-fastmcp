@@ -9,3 +9,6 @@ class DjangoAdminFastmcpConfig(AppConfig):
     def ready(self):
         # Import registers the system checks (SPEC.md section 3).
         from django_admin_fastmcp import checks  # noqa: F401
+        from django_admin_fastmcp.tracing import install_sentry_event_processor
+
+        install_sentry_event_processor()
