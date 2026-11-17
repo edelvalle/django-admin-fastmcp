@@ -53,14 +53,25 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    name: "Tests & Coverage (py${{ matrix.python-version }})"
+    name: "Tests & Coverage (py${{ matrix.python-version }}, Django ${{ matrix.django-version }})"
     needs: [lint-and-format]  # Only run if linting passes
 
     strategy:
       fail-fast: false
       matrix:
-        # The oldest and the newest Python that pyproject.toml supports.
-        python-version: ["3.11", "3.14"]
+        # Every Django series that pyproject.toml supports, each on the oldest and the newest Python
+        # that both pyproject.toml and that Django series support.
+        include:
+          - { django-version: "5.0", python-version: "3.11" }
+          - { django-version: "5.0", python-version: "3.12" }
+          - { django-version: "5.1", python-version: "3.11" }
+          - { django-version: "5.1", python-version: "3.13" }
+          - { django-version: "5.2", python-version: "3.11" }
+          - { django-version: "5.2", python-version: "3.14" }
+          - { django-version: "6.0", python-version: "3.12" }
+          - { django-version: "6.0", python-version: "3.14" }
+          - { django-version: "6.1", python-version: "3.12" }
+          - { django-version: "6.1", python-version: "3.14" }
 
     steps:
     - name: Checkout code
@@ -79,4 +90,4 @@ jobs:
       run: make install PYTHON_VERSION=${{ matrix.python-version }}
 
     - name: Run tests with coverage
-      run: make coverage
+      run: make coverage DJANGO_VERSION=${{ matrix.django-version }}
