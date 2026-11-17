@@ -12,7 +12,7 @@ This directory contains GitHub Actions workflows for automated code quality chec
 
 - **Lint & Format Check**: Verifies code formatting and linting rules using `make lint`
 - **Type Check**: Runs type checking with `make typecheck` (zuban)
-- **Tests & Coverage**: Runs the test suite with a coverage report using `make coverage`, for every Django series that `pyproject.toml` supports (5.0 to 6.1), each on the oldest and the newest Python that both `pyproject.toml` and that Django series support
+- **Tests**: Runs the test suite using `make test`, for every Django series that `pyproject.toml` supports (5.0 to 6.1), each on the oldest and the newest Python that both `pyproject.toml` and that Django series support.  The newest combination (Django 6.1 on Python 3.14) runs `make coverage` instead, to report coverage
 
 **Requirements**: Tests will only run if linting passes.
 
@@ -21,7 +21,10 @@ This directory contains GitHub Actions workflows for automated code quality chec
 - `make install` - Install dependencies using uv; `PYTHON_VERSION` selects the Python to pin
 - `make lint` - Check formatting and linting (ruff)
 - `make typecheck` - Run type checking (zuban)
-- `make coverage` - Run tests with coverage reporting; `DJANGO_VERSION` (e.g. `5.1`) runs them against that Django series instead of the one in `uv.lock`
+- `make test` - Run the tests
+- `make coverage` - Run tests with coverage reporting
+
+Both test targets take `DJANGO_VERSION` (e.g. `5.1`) to run against that Django series instead of the one in `uv.lock`.
 
 ## Running Locally
 
