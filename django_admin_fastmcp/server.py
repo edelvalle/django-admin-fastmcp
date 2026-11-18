@@ -33,6 +33,11 @@ READ_TOOLS = frozenset(
     }
 )
 READ_ONLY = {"readOnlyHint": True}
+# A write that only adds rows.  Every other write may overwrite or remove data: an update
+# replaces values, an admin action or a declared write tool can do anything.
+ADDITIVE_TOOLS = frozenset({"create_object"})
+ADDITIVE = {"readOnlyHint": False, "destructiveHint": False}
+DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True}
 
 
 def all_tools() -> dict[str, Callable]:
@@ -73,6 +78,21 @@ def is_read_tool(name: str, fn: Callable) -> bool:
 
     meta = getattr(fn, ATTRIBUTE, None)
     return name in READ_TOOLS or (isinstance(meta, ToolMeta) and not meta.write)
+
+
+def annotate_tool(name: str, fn: Callable) -> dict[str, bool]:
+    """Return the MCP hints of the tool `fn`, registered under the catalogue `name`.
+
+    A read gets `readOnlyHint`; `create_object` is a non-destructive write; every other
+    write, declared ones included, is destructive.
+
+    """
+    if is_read_tool(name, fn):
+        return READ_ONLY
+    elif name in ADDITIVE_TOOLS:
+        return ADDITIVE
+    else:
+        return DESTRUCTIVE
 
 
 def build_server(*, with_auth: bool = True) -> FastMCP:
@@ -118,7 +138,7 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
         server.tool(
             fn,
             name=f"{NAMESPACE}_{name}",
-            annotations=READ_ONLY if is_read_tool(name, fn) else None,
+            annotations=annotate_tool(name, fn),
         )
 
     if with_codemode:

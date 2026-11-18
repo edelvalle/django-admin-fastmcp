@@ -10,6 +10,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Changed
 
 - Every read-only tool carries the MCP hint `readOnlyHint`, not only `admin_run_code`: the generic reads, `admin_autocomplete`, and the declared tools without `write=True`.  Clients that honor the hint can run them without asking for approval on each call.
+- The write tools carry `destructiveHint`: false for `admin_create_object`, true for `admin_update_object`, `admin_delete_object`, `admin_run_action` and the declared tools with `write=True`.
 
 ## [0.3.2] - 2026-11-17
 
