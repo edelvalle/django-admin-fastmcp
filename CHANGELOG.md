@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Every read-only tool carries the MCP hint `readOnlyHint`, not only `admin_run_code`: the generic reads, `admin_autocomplete`, and the declared tools without `write=True`.  Clients that honor the hint can run them without asking for approval on each call.
+
 ## [0.3.2] - 2026-11-17
 
 ### Fixed

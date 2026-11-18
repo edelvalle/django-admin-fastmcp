@@ -20,6 +20,19 @@ MAX_BODY_BYTES = 256 * 1024
 NAMESPACE = "admin"
 # The catalogue name of admin_run_code, outside all_tools(): it exists only with code mode on.
 CODEMODE_TOOL = "run_code"
+# The generic tools that only read.
+READ_TOOLS = frozenset(
+    {
+        "list_models",
+        "describe_model",
+        "search_objects",
+        "get_object",
+        "object_history",
+        "recent_actions",
+        "autocomplete",
+    }
+)
+READ_ONLY = {"readOnlyHint": True}
 
 
 def all_tools() -> dict[str, Callable]:
@@ -46,6 +59,20 @@ def declared() -> dict[str, tuple[Callable, str]]:
     from django_admin_fastmcp.tools.declared import declared_tools
 
     return declared_tools()
+
+
+def is_read_tool(name: str, fn: Callable) -> bool:
+    """Tell whether the tool `fn`, registered under the catalogue `name`, only reads.
+
+    True for the generic tools of `READ_TOOLS` and the declared tools without
+    `write=True`.  `fn` may be wrapped (tracing, connections): the wrappers copy the
+    declared tool's metadata.
+
+    """
+    from django_admin_fastmcp.tools.declared import ATTRIBUTE, ToolMeta
+
+    meta = getattr(fn, ATTRIBUTE, None)
+    return name in READ_TOOLS or (isinstance(meta, ToolMeta) and not meta.write)
 
 
 def build_server(*, with_auth: bool = True) -> FastMCP:
@@ -88,7 +115,11 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
         if name not in disabled
     }
     for name, fn in registered.items():
-        server.tool(fn, name=f"{NAMESPACE}_{name}")
+        server.tool(
+            fn,
+            name=f"{NAMESPACE}_{name}",
+            annotations=READ_ONLY if is_read_tool(name, fn) else None,
+        )
 
     if with_codemode:
         run_code, description = codemode.build_run_code(registered)
@@ -96,7 +127,7 @@ def build_server(*, with_auth: bool = True) -> FastMCP:
             instrument(CODEMODE_TOOL, run_code),
             name=f"{NAMESPACE}_{CODEMODE_TOOL}",
             description=description,
-            annotations={"readOnlyHint": True},
+            annotations=READ_ONLY,
         )
     return server
 
