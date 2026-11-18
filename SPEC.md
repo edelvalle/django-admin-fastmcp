@@ -282,7 +282,7 @@ reason.
 Mount the server under the namespace `admin`, so wire names are `admin_list_models` and so
 on. That keeps names unique when a consumer aggregates several MCP servers.
 
-Every tool that only reads carries the MCP hint `readOnlyHint`: the read tools below, `autocomplete`, the declared tools without `write=True`, and `admin_run_code`.  Clients use it to run those tools without asking for approval each time.
+Every tool that only reads carries the MCP hint `readOnlyHint`: the read tools below, `autocomplete`, the declared tools without `write=True`, and `admin_run_code`.  Clients use it to run those tools without asking for approval each time.  The writes carry `destructiveHint`: false for `create_object`, which only adds rows, and true for the others, since an update overwrites values and an admin action or a declared write tool can remove or change anything.
 
 ### Read
 
