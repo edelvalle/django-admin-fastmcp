@@ -33,24 +33,12 @@ from pydantic_core import to_jsonable_python
 
 from django_admin_fastmcp import conf, tracing
 from django_admin_fastmcp.errors import ToolError, ToolRefusalError
-from django_admin_fastmcp.tools.declared import ATTRIBUTE, ToolMeta
+from django_admin_fastmcp.server import is_read_tool
 
 try:
     import pydantic_monty
 except ImportError:  # pragma: no cover - exercised when the extra is absent
     pydantic_monty = None  # type: ignore[assignment]
-
-# The generic tools a snippet may call: the ones that only read.  Writes stay direct calls,
-# because their preview protocol needs an agent that reads the preview before it confirms.
-READ_TOOLS = (
-    "list_models",
-    "describe_model",
-    "search_objects",
-    "get_object",
-    "object_history",
-    "recent_actions",
-    "autocomplete",
-)
 
 REDACTED = "[redacted]"
 
@@ -119,21 +107,15 @@ class SandboxTool:
 def select_sandbox_tools(registered: Mapping[str, Callable]) -> dict[str, SandboxTool]:
     """The read tools among `registered`, the tools of the server keyed by catalogue name.
 
-    The generic read tools of `READ_TOOLS`, and the declared tools without `write=True`.
-    A tool that `DISABLED_TOOLS` removed from the server is absent from `registered`, so
-    it is absent from the sandbox too.
+    The tools `is_read_tool`:func: accepts.  Writes stay direct calls, because their
+    preview protocol needs an agent that reads the preview before it confirms.  A tool
+    that `DISABLED_TOOLS` removed from the server is absent from `registered`, so it is
+    absent from the sandbox too.
 
     """
     return {
-        name: _describe_tool(name, fn)
-        for name, fn in registered.items()
-        if name in READ_TOOLS or _is_declared_read(fn)
+        name: _describe_tool(name, fn) for name, fn in registered.items() if is_read_tool(name, fn)
     }
-
-
-def _is_declared_read(fn: Callable) -> bool:
-    meta = getattr(fn, ATTRIBUTE, None)
-    return isinstance(meta, ToolMeta) and not meta.write
 
 
 def _describe_tool(name: str, fn: Callable) -> SandboxTool:
